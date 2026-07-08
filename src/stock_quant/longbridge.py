@@ -43,6 +43,14 @@ class LongbridgeClient:
         """Run a Longbridge CLI command and parse its JSON output."""
         return self._run(args)
 
+    def run_text(self, args: list[str]) -> str:
+        """Run a Longbridge CLI command and return raw stdout/stderr text."""
+        result = subprocess.run([self.binary, *args], capture_output=True, text=True, check=False)
+        output = result.stdout.strip() or result.stderr.strip()
+        if result.returncode != 0:
+            raise LongbridgeError(output)
+        return output
+
     def _run(self, args: list[str]) -> Any:
         command = [self.binary, *args, "--format", "json"]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
