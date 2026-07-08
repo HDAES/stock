@@ -68,6 +68,33 @@ def test_normalize_intraday_kline_converts_utc_to_market_time() -> None:
     assert str(frame.iloc[0]["date"]) == "2024-01-02 09:30:00"
 
 
+def test_normalize_intraday_kline_filters_after_hours_bars() -> None:
+    frame = normalize_intraday_kline(
+        [
+            {
+                "date": "2024-01-02T20:55:00Z",
+                "open": 100,
+                "high": 101,
+                "low": 99,
+                "close": 100.5,
+                "volume": 1000,
+            },
+            {
+                "date": "2024-01-02T21:30:00Z",
+                "open": 101,
+                "high": 102,
+                "low": 100,
+                "close": 101.5,
+                "volume": 500,
+            },
+        ],
+        "TEST.US",
+    )
+
+    assert len(frame) == 1
+    assert str(frame.iloc[0]["date"]) == "2024-01-02 15:55:00"
+
+
 def test_market_is_open_parses_nested_us_status() -> None:
     assert market_is_open({"markets": [{"market": "US", "status": "Open"}]}, "US") is True
     assert market_is_open({"markets": [{"market": "US", "status": "Closed"}]}, "US") is False
