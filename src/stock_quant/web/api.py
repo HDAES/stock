@@ -22,7 +22,9 @@ from stock_quant.analysis import (
     strategy_rank,
 )
 from stock_quant.cache import DataCache
-from stock_quant.intraday_report import read_intraday_report
+from stock_quant.intraday_backtest import intraday_backtest, load_intraday_history
+from stock_quant.intraday_data import resolve_intraday_backtest_symbols
+from stock_quant.intraday_report import read_intraday_report, write_intraday_report
 from stock_quant.longbridge import LongbridgeClient
 
 from .schemas import KlinePoint, RefreshResult, StockSummary, SymbolList
@@ -160,6 +162,41 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/intraday/backtest")
+    def run_intraday_backtest_report(
+        symbols: list[str] = Query(default=[]),
+        report_dir: str = Query(default="reports/intraday"),
+        commission_bps: float | None = Query(default=None),
+        slippage_bps: float | None = Query(default=None),
+    ) -> dict:
+        config = get_config()
+        data_dir = config.intraday.data_dir
+        selected_symbols = resolve_intraday_backtest_symbols(
+            config,
+            data_dir,
+            explicit_symbols=symbols or None,
+        )
+        commission = config.intraday.commission_bps if commission_bps is None else commission_bps
+        slippage = config.intraday.slippage_bps if slippage_bps is None else slippage_bps
+        try:
+            frames = load_intraday_history(data_dir, selected_symbols, config.intraday.period)
+            result = intraday_backtest(
+                frames,
+                config.intraday,
+                commission_bps=commission,
+                slippage_bps=slippage,
+            )
+            write_intraday_report(result, report_dir)
+            report = read_intraday_report(report_dir)
+            report["symbols"] = selected_symbols
+            return report
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Intraday backtest failed: {exc}") from exc
 
     @app.post("/api/intraday/evaluate")
     def run_intraday_evaluate() -> dict:
