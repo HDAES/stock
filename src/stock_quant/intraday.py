@@ -12,6 +12,8 @@ from .config import IntradayConfig
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]+\.US$")
 MARKET_TIMEZONE = "America/New_York"
+OPEN_STATUS_WORDS = {"open", "trading", "trade", "normal", "regular"}
+CLOSED_STATUS_WORDS = {"closed", "close", "休市"}
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,58 @@ def extract_watchlist_symbols(payload: dict | list[dict]) -> list[str]:
 
     walk(payload)
     return sorted(symbols)
+
+
+def market_is_open(payload: Any, market: str = "US") -> bool:
+    """Return whether a Longbridge market-status payload says the market is open.
+
+    The CLI output shape may vary by SDK/CLI version, so this intentionally
+    accepts nested dict/list payloads and looks for a market-specific status
+    record first. If no explicit market key is found, it falls back to any open
+    status string found in the payload.
+    """
+    target = market.upper()
+    market_records: list[dict[str, Any]] = []
+    status_values: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            normalized = {str(key).lower(): value for key, value in node.items()}
+            market_value = next(
+                (
+                    normalized.get(key)
+                    for key in ("market", "region", "country", "code", "market_code")
+                    if key in normalized
+                ),
+                None,
+            )
+            if market_value is not None and str(market_value).upper() == target:
+                market_records.append(node)
+            for key, value in normalized.items():
+                if "status" in key or key in {"state", "session", "trade_status"}:
+                    if isinstance(value, str):
+                        status_values.append(value)
+                if isinstance(value, (dict, list)):
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str):
+            status_values.append(node)
+
+    walk(payload)
+
+    for record in market_records:
+        record_text = " ".join(str(value).lower() for value in record.values())
+        if any(word in record_text for word in CLOSED_STATUS_WORDS):
+            return False
+        if any(word in record_text for word in OPEN_STATUS_WORDS):
+            return True
+
+    combined = " ".join(value.lower() for value in status_values)
+    if any(word in combined for word in CLOSED_STATUS_WORDS):
+        return False
+    return any(word in combined for word in OPEN_STATUS_WORDS)
 
 
 def _normalize_symbol_candidate(value: str) -> str | None:
