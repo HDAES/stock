@@ -30,6 +30,7 @@ import { copy, type Copy, type Language } from "./i18n";
 import type {
   AppConfig,
   BacktestResult,
+  IntradayAutoTradeState,
   IntradayReport,
   IntradaySignal,
   IntradayState,
@@ -82,6 +83,7 @@ function App() {
   const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
   const [selectedBacktestSymbols, setSelectedBacktestSymbols] = useState<string[]>([]);
   const [paperSummary, setPaperSummary] = useState<LongbridgePaperSummary | null>(null);
+  const [autoTrade, setAutoTrade] = useState<IntradayAutoTradeState | null>(null);
   const [paperOrder, setPaperOrder] = useState<LongbridgePaperOrderPayload>(DEFAULT_PAPER_ORDER);
   const [paperCancelOrderId, setPaperCancelOrderId] = useState("");
   const [paperOperationResult, setPaperOperationResult] = useState<unknown>(null);
@@ -91,6 +93,7 @@ function App() {
   const [runningBacktest, setRunningBacktest] = useState(false);
   const [loadingPaper, setLoadingPaper] = useState(false);
   const [submittingPaper, setSubmittingPaper] = useState(false);
+  const [updatingAutoTrade, setUpdatingAutoTrade] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -239,13 +242,30 @@ function App() {
     setLoadingPaper(true);
     setError(null);
     try {
-      const payload = await api.longbridgePaperSummary();
-      setPaperSummary(payload);
+      const [summaryPayload, autoTradePayload] = await Promise.all([
+        api.longbridgePaperSummary(),
+        api.intradayAutoTrade()
+      ]);
+      setPaperSummary(summaryPayload);
+      setAutoTrade(autoTradePayload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Longbridge paper summary failed");
     } finally {
       setLoadingPaper(false);
       setLoading(false);
+    }
+  }
+
+  async function updateAutoTrade(enabled: boolean) {
+    setUpdatingAutoTrade(true);
+    setError(null);
+    try {
+      const payload = await api.updateIntradayAutoTrade(enabled);
+      setAutoTrade(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Update auto trade failed");
+    } finally {
+      setUpdatingAutoTrade(false);
     }
   }
 
@@ -332,12 +352,15 @@ function App() {
           <LongbridgePaperView
             t={t}
             summary={paperSummary}
+            autoTrade={autoTrade}
             order={paperOrder}
             cancelOrderId={paperCancelOrderId}
             operationResult={paperOperationResult}
             loading={loadingPaper}
             submitting={submittingPaper}
+            updatingAutoTrade={updatingAutoTrade}
             onRefresh={loadPaperSummary}
+            onAutoTradeChange={updateAutoTrade}
             onOrderChange={setPaperOrder}
             onSubmitOrder={submitPaperOrder}
             onCancelOrderIdChange={setPaperCancelOrderId}
@@ -440,7 +463,7 @@ function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Co
   );
 }
 
-function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult, loading, submitting, onRefresh, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; onRefresh: () => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
+function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, operationResult, loading, submitting, updatingAutoTrade, onRefresh, onAutoTradeChange, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; autoTrade: IntradayAutoTradeState | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; updatingAutoTrade: boolean; onRefresh: () => void; onAutoTradeChange: (enabled: boolean) => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
   const account = unwrapPaperPayload(summary?.account);
   const positions = rowsFromPayload(unwrapPaperPayload(summary?.positions));
   const orders = rowsFromPayload(unwrapPaperPayload(summary?.orders));
@@ -452,6 +475,7 @@ function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult
     <section className="stack">
       <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div>
       <div className="alert">{t.paperTradingRiskNote}</div>
+      <AutoTradeSwitch state={autoTrade} updating={updatingAutoTrade} onChange={onAutoTradeChange} />
       <PaperAccountPanel metrics={accountMetrics} raw={summary?.account} />
       <div className="two-column">
         <div className="panel">
@@ -478,6 +502,18 @@ function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult
         <PaperOrdersPanel title={t.paperOrders} orders={orders} raw={summary?.orders} />
       </div>
     </section>
+  );
+}
+
+function AutoTradeSwitch({ state, updating, onChange }: { state: IntradayAutoTradeState | null; updating: boolean; onChange: (enabled: boolean) => void }) {
+  const enabled = Boolean(state?.enabled);
+  return (
+    <div className="panel">
+      <div className="panel-header"><h2>盘中自动交易</h2><span>{enabled ? "已开启" : "已关闭"}</span></div>
+      <p className="muted">开启后，日内交易轮询在开盘期间遇到 BUY / SELL 信号，会自动向当前 Longbridge CLI 模拟账户提交买卖委托；关闭时只生成信号，不下单。</p>
+      <div className="metric-grid compact"><Metric label="状态" value={enabled ? "开启" : "关闭"} /><Metric label="模式" value={state?.mode ?? "longbridge_paper"} /><Metric label="更新时间" value={formatDateTime(state?.updated_at)} /></div>
+      <button className="text-button wide" onClick={() => onChange(!enabled)} disabled={updating}>{updating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{enabled ? "关闭自动交易" : "开启自动交易"}</button>
+    </div>
   );
 }
 
