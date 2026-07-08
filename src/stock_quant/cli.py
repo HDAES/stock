@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 
 import pandas as pd
@@ -9,6 +10,7 @@ from .analysis import evaluate_intraday, load_strategy_inputs, strategy_backtest
 from .cache import DataCache
 from .config import load_config
 from .factors import build_factor_table
+from .intraday_backtest import intraday_backtest, load_intraday_history
 
 
 def main() -> None:
@@ -33,6 +35,16 @@ def main() -> None:
     intraday_watch_parser = subparsers.add_parser("intraday-watch", help="Continuously evaluate intraday paper signals")
     intraday_watch_parser.add_argument("--config", default="config/default.json")
 
+    intraday_backtest_parser = subparsers.add_parser(
+        "intraday-backtest",
+        help="Run a historical intraday paper backtest from local 5m JSON files",
+    )
+    intraday_backtest_parser.add_argument("--config", default="config/default.json")
+    intraday_backtest_parser.add_argument("--symbols", nargs="*", help="Symbols to backtest, e.g. AAPL.US MSFT.US")
+    intraday_backtest_parser.add_argument("--data-dir", default=None, help="Directory containing intraday JSON files")
+    intraday_backtest_parser.add_argument("--commission-bps", type=float, default=None)
+    intraday_backtest_parser.add_argument("--slippage-bps", type=float, default=None)
+
     args = parser.parse_args()
     if args.command == "fetch":
         run_fetch(args)
@@ -44,6 +56,8 @@ def main() -> None:
         run_intraday_once(args)
     elif args.command == "intraday-watch":
         run_intraday_watch(args)
+    elif args.command == "intraday-backtest":
+        run_intraday_backtest(args)
 
 
 def run_fetch(args: argparse.Namespace) -> None:
@@ -101,6 +115,40 @@ def run_intraday_watch(args: argparse.Namespace) -> None:
         print("intraday watch stopped")
 
 
+def run_intraday_backtest(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbols = [symbol.upper() for symbol in (args.symbols or config.intraday.symbols or config.universe)]
+    data_dir = args.data_dir or config.intraday.data_dir
+    commission_bps = config.intraday.commission_bps if args.commission_bps is None else args.commission_bps
+    slippage_bps = config.intraday.slippage_bps if args.slippage_bps is None else args.slippage_bps
+
+    frames = load_intraday_history(data_dir, symbols, config.intraday.period)
+    result = intraday_backtest(
+        frames,
+        config.intraday,
+        commission_bps=commission_bps,
+        slippage_bps=slippage_bps,
+    )
+
+    print("Intraday backtest symbols:")
+    print(", ".join(symbols))
+    print("")
+    print("Intraday backtest metrics:")
+    print(pd.Series(result["metrics"]).map(_format_metric).to_string())
+    print("")
+    if result["daily_summary"]:
+        print("Daily summary:")
+        print(pd.DataFrame(result["daily_summary"]).tail(10).to_string(index=False))
+    else:
+        print("Daily summary: (none)")
+    print("")
+    if result["trades"]:
+        print("Trades:")
+        print(pd.DataFrame(result["trades"]).tail(20).to_string(index=False))
+    else:
+        print("Trades: (none)")
+
+
 def print_intraday_result(result: dict) -> None:
     print("Paper portfolio:")
     print(f"equity={result['equity']:.2f} cash={result['cash']:.2f} daily_loss={result['daily_loss_pct']:.2%}")
@@ -120,6 +168,16 @@ def print_intraday_result(result: dict) -> None:
         for signal in signals
     ]
     print(pd.DataFrame(rows).to_string(index=False))
+
+
+def _format_metric(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if math.isinf(number):
+        return "inf"
+    return f"{number:.4f}"
 
 
 if __name__ == "__main__":
