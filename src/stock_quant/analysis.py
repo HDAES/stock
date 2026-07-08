@@ -19,6 +19,7 @@ from .intraday import (
     market_is_open,
     normalize_intraday_kline,
 )
+from .intraday_auto_trade import maybe_execute_auto_trade
 from .intraday_data import configured_intraday_symbols, merge_intraday_history
 from .longbridge import LongbridgeClient
 from .paper import PaperPortfolio
@@ -312,6 +313,16 @@ def evaluate_intraday(
             )
             signal["trade"] = trade
 
+        trade_payload = signal.get("trade")
+        if isinstance(trade_payload, dict):
+            signal["longbridge_order"] = maybe_execute_auto_trade(
+                config,
+                longbridge,
+                signal,
+                trade_payload,
+                logger,
+            )
+
         portfolio.processed_intraday_bars[symbol] = bar_id
         executable_signals.append(signal)
         price_text = _format_price(signal.get("execution_price") or signal.get("price"))
@@ -319,6 +330,9 @@ def evaluate_intraday(
         trade_text = ""
         if isinstance(trade, dict):
             trade_text = f" qty={trade.get('quantity')}"
+        auto_trade = signal.get("longbridge_order")
+        if isinstance(auto_trade, dict) and auto_trade.get("enabled"):
+            trade_text += f" longbridge={auto_trade.get('reason')}"
         _log_intraday(
             logger,
             f"{symbol} {signal['action']} {signal['reason']} bar={bar_id} price={price_text}{trade_text}",
