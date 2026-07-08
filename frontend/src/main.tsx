@@ -43,6 +43,7 @@ import type {
 import "./styles.css";
 
 type View = "stock" | "strategy" | "intraday" | "intradayBacktest" | "longbridgePaper";
+type AnyRecord = Record<string, unknown>;
 const REPORT_PAGE_SIZE = 20;
 
 const DEFAULT_PAPER_ORDER: LongbridgePaperOrderPayload = {
@@ -440,10 +441,18 @@ function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Co
 }
 
 function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult, loading, submitting, onRefresh, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; onRefresh: () => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
+  const account = unwrapPaperPayload(summary?.account);
+  const positions = rowsFromPayload(unwrapPaperPayload(summary?.positions));
+  const orders = rowsFromPayload(unwrapPaperPayload(summary?.orders));
+  const accountRows = rowsFromPayload(account);
+  const accountRecord = accountRows[0] ?? (isRecord(account) ? account : {});
+  const accountMetrics = buildAccountMetrics(accountRecord, positions);
+
   return (
     <section className="stack">
       <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div>
       <div className="alert">{t.paperTradingRiskNote}</div>
+      <PaperAccountPanel metrics={accountMetrics} raw={summary?.account} />
       <div className="two-column">
         <div className="panel">
           <div className="panel-header"><h2>{t.orderForm}</h2><span>{t.submitPaperOrder}</span></div>
@@ -461,16 +470,84 @@ function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult
           <div className="panel-header"><h2>{t.cancelPaperOrder}</h2><span>{t.orderId}</span></div>
           <div className="symbol-picker"><input value={cancelOrderId} onChange={(event) => onCancelOrderIdChange(event.target.value)} placeholder={t.orderId} /></div>
           <button className="text-button wide" onClick={onCancelOrder} disabled={submitting || !cancelOrderId.trim()}>{submitting ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.cancelPaperOrder}</button>
-          {operationResult !== null && <RawPayloadView title={t.orderResult} payload={operationResult} />}
+          {operationResult !== null && <OperationResultView title={t.orderResult} payload={operationResult} />}
         </div>
       </div>
       <div className="two-column">
-        <RawPayloadView title={t.paperAccount} payload={summary?.account ?? null} />
-        <RawPayloadView title={t.paperPositions} payload={summary?.positions ?? null} />
+        <PaperPositionsPanel title={t.paperPositions} positions={positions} raw={summary?.positions} />
+        <PaperOrdersPanel title={t.paperOrders} orders={orders} raw={summary?.orders} />
       </div>
-      <RawPayloadView title={t.paperOrders} payload={summary?.orders ?? null} />
     </section>
   );
+}
+
+function PaperAccountPanel({ metrics, raw }: { metrics: Array<{ label: string; value: number | null }>; raw: unknown }) {
+  const error = paperError(raw);
+  const chartData = metrics.filter((metric) => metric.value !== null).map((metric) => ({ label: metric.label, value: Math.abs(Number(metric.value)) }));
+  return (
+    <div className="panel">
+      <div className="panel-header"><h2>账户信息</h2><span>{error ? "读取失败" : "资产概览"}</span></div>
+      {error && <p className="muted">{error}</p>}
+      <div className="metric-grid compact">{metrics.map((metric) => <Metric key={metric.label} label={metric.label} value={formatNumber(metric.value)} />)}</div>
+      {chartData.length > 0 && <ResponsiveContainer width="100%" height={260}><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" /><YAxis /><Tooltip formatter={(value) => formatNumber(Number(value))} /><Bar dataKey="value" radius={[4, 4, 0, 0]} fill="#2563eb" /></BarChart></ResponsiveContainer>}
+    </div>
+  );
+}
+
+function PaperPositionsPanel({ title, positions, raw }: { title: string; positions: AnyRecord[]; raw: unknown }) {
+  const error = paperError(raw);
+  const rows = positions.map((row) => ({
+    symbol: valueText(row, ["symbol", "代码", "标的"]),
+    quantity: valueNumber(row, ["quantity", "qty", "持仓", "数量"]),
+    cost: valueNumber(row, ["cost_price", "avg_price", "average_cost", "成本价"]),
+    price: valueNumber(row, ["last_price", "market_price", "current_price", "最新价"]),
+    marketValue: valueNumber(row, ["market_value", "marketvalue", "持仓市值", "市值"]),
+    pnl: valueNumber(row, ["unrealized_pnl", "unrealizedpl", "pnl", "盈亏", "未实现盈亏"])
+  }));
+  const chartData = rows.map((row) => ({ label: row.symbol, value: Math.abs(row.marketValue ?? 0) })).filter((row) => row.value > 0);
+  return (
+    <div className="panel table-panel">
+      <div className="panel-header"><h2>{title}</h2><span>{error ? "读取失败" : `${rows.length} 个持仓`}</span></div>
+      {error && <p className="muted">{error}</p>}
+      {chartData.length > 0 && <ResponsiveContainer width="100%" height={240}><BarChart data={chartData} layout="vertical" margin={{ left: 20 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" /><YAxis dataKey="label" type="category" width={76} /><Tooltip formatter={(value) => formatNumber(Number(value))} /><Bar dataKey="value" fill="#0f766e" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer>}
+      <div className="table-scroll"><table className="compact-table"><thead><tr><th>标的</th><th>数量</th><th>成本价</th><th>最新价</th><th>市值</th><th>未实现盈亏</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.symbol}-${index}`}><td>{row.symbol}</td><td>{formatNumber(row.quantity, 0)}</td><td>{formatNumber(row.cost)}</td><td>{formatNumber(row.price)}</td><td>{formatNumber(row.marketValue)}</td><td className={signedClass(row.pnl)}>{formatNumber(row.pnl)}</td></tr>)}</tbody></table></div>
+    </div>
+  );
+}
+
+function PaperOrdersPanel({ title, orders, raw }: { title: string; orders: AnyRecord[]; raw: unknown }) {
+  const error = paperError(raw);
+  const rows = orders.map((row) => ({
+    orderId: valueText(row, ["order_id", "orderid", "Order ID", "订单 ID"]),
+    symbol: valueText(row, ["symbol", "代码", "标的"]),
+    side: valueText(row, ["side", "方向"]),
+    type: valueText(row, ["order_type", "ordertype", "Order Type", "类型"]),
+    status: valueText(row, ["status", "状态"]),
+    quantity: valueNumber(row, ["qty", "quantity", "submitted_quantity", "数量"]),
+    price: valueNumber(row, ["price", "submitted_price", "价格"]),
+    execQuantity: valueNumber(row, ["exec_qty", "executed_quantity", "filled_quantity", "Exec Qty", "成交数量"]),
+    execPrice: valueNumber(row, ["exec_price", "executed_price", "avg_exec_price", "Exec Price", "成交价"]),
+    createdAt: valueText(row, ["created_at", "createdAt", "Created At", "创建时间"])
+  }));
+  const statusCounts = Object.entries(rows.reduce<Record<string, number>>((counts, row) => {
+    const status = row.status || "Unknown";
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {})).map(([label, value]) => ({ label, value }));
+  return (
+    <div className="panel table-panel">
+      <div className="panel-header"><h2>{title}</h2><span>{error ? "读取失败" : `${rows.length} 条委托`}</span></div>
+      {error && <p className="muted">{error}</p>}
+      {statusCounts.length > 0 && <ResponsiveContainer width="100%" height={220}><BarChart data={statusCounts}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" /><YAxis allowDecimals={false} /><Tooltip formatter={(value) => formatNumber(Number(value), 0)} /><Bar dataKey="value" fill="#2563eb" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>}
+      <div className="table-scroll"><table className="compact-table"><thead><tr><th>订单 ID</th><th>标的</th><th>方向</th><th>类型</th><th>状态</th><th>数量</th><th>价格</th><th>成交量</th><th>成交价</th><th>创建时间</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.orderId}-${index}`}><td>{row.orderId}</td><td>{row.symbol}</td><td>{row.side}</td><td>{row.type}</td><td>{row.status}</td><td>{formatNumber(row.quantity, 0)}</td><td>{formatNumber(row.price)}</td><td>{formatNumber(row.execQuantity, 0)}</td><td>{formatNumber(row.execPrice)}</td><td>{row.createdAt}</td></tr>)}</tbody></table></div>
+    </div>
+  );
+}
+
+function OperationResultView({ title, payload }: { title: string; payload: unknown }) {
+  const rows = rowsFromPayload(payload);
+  const record = rows[0] ?? (isRecord(payload) ? payload : {});
+  return <div className="panel"><div className="panel-header"><h2>{title}</h2></div><div className="metric-grid compact">{Object.entries(record).slice(0, 8).map(([key, value]) => <Metric key={key} label={key} value={String(value ?? "-")} />)}</div></div>;
 }
 
 function IntradayReportView({ t, report, selectedSymbols, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; selectedSymbols: string[]; runningBacktest: boolean; onRunBacktest: () => void }) {
@@ -514,10 +591,6 @@ function TradeTable({ t, trades }: { t: Copy; trades: Array<Record<string, strin
   return <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.time}</th><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => <tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{formatDateTime(recordString(trade, "timestamp"))}</td><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>)}</tbody></table></div>;
 }
 
-function RawPayloadView({ title, payload }: { title: string; payload: unknown }) {
-  return <div className="panel"><div className="panel-header"><h2>{title}</h2></div><pre>{payload === null || payload === undefined ? "-" : JSON.stringify(payload, null, 2)}</pre></div>;
-}
-
 function Pagination({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
   const pages = Math.max(1, Math.ceil(total / REPORT_PAGE_SIZE));
   if (total <= REPORT_PAGE_SIZE) return null;
@@ -543,7 +616,7 @@ function recordNumber(record: Record<string, unknown>, key: string): number | nu
   const value = record[key];
   if (typeof value === "number") return value;
   if (typeof value === "string") {
-    const parsed = Number(value);
+    const parsed = Number(value.replace(/,/g, ""));
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
@@ -559,6 +632,73 @@ function getIntradayConfigSymbols(config: AppConfig | null): string[] {
   const raw = config?.intraday.symbols;
   if (!Array.isArray(raw)) return [];
   return raw.map((item) => String(item).trim().toUpperCase()).filter(Boolean).sort();
+}
+
+function unwrapPaperPayload(payload: unknown): unknown {
+  if (isRecord(payload) && "ok" in payload) {
+    return payload.ok === false ? null : payload.data;
+  }
+  return payload;
+}
+
+function paperError(payload: unknown): string | null {
+  if (isRecord(payload) && payload.ok === false) return String(payload.error ?? "读取失败");
+  return null;
+}
+
+function rowsFromPayload(payload: unknown): AnyRecord[] {
+  if (Array.isArray(payload)) return payload.filter(isRecord);
+  if (!isRecord(payload)) return [];
+  for (const key of ["data", "items", "list", "records", "rows", "orders", "positions"]) {
+    const value = payload[key];
+    if (Array.isArray(value)) return value.filter(isRecord);
+  }
+  return [payload];
+}
+
+function buildAccountMetrics(account: AnyRecord, positions: AnyRecord[]): Array<{ label: string; value: number | null }> {
+  const positionValue = sumByAlias(positions, ["market_value", "marketvalue", "持仓市值", "市值"]);
+  return [
+    { label: "总资产", value: valueNumber(account, ["total_assets", "totalasset", "net_assets", "nav", "总资产", "资产净值"]) },
+    { label: "可用现金", value: valueNumber(account, ["cash", "available_cash", "availablecash", "buying_power", "available_funds", "现金", "可用现金", "购买力"]) },
+    { label: "持仓市值", value: valueNumber(account, ["market_value", "stock_value", "holding_value", "securities_value", "持仓市值"]) ?? positionValue },
+    { label: "盈亏", value: valueNumber(account, ["pnl", "profit", "unrealized_pnl", "daily_pnl", "盈亏", "未实现盈亏"]) }
+  ];
+}
+
+function sumByAlias(records: AnyRecord[], aliases: string[]): number | null {
+  const values = records.map((record) => valueNumber(record, aliases)).filter((value): value is number => value !== null);
+  if (!values.length) return null;
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function valueNumber(record: AnyRecord, aliases: string[]): number | null {
+  for (const key of findKeys(record, aliases)) {
+    const value = recordNumber(record, key);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function valueText(record: AnyRecord, aliases: string[]): string {
+  for (const key of findKeys(record, aliases)) {
+    const value = record[key];
+    if (value !== null && value !== undefined && String(value).trim() !== "") return String(value);
+  }
+  return "-";
+}
+
+function findKeys(record: AnyRecord, aliases: string[]): string[] {
+  const normalizedAliases = aliases.map(normalizeKey);
+  return Object.keys(record).filter((key) => normalizedAliases.includes(normalizeKey(key)));
+}
+
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, "");
+}
+
+function isRecord(value: unknown): value is AnyRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatDateTime(value: string | null | undefined): string {
