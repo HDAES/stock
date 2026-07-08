@@ -116,6 +116,9 @@ export type IntradayState = {
 export type IntradayReport = {
   report_dir: string;
   generated_at?: string;
+  symbols?: string[];
+  auto_fetched_symbols?: string[];
+  auto_fetch_count?: number;
   metrics: Record<string, number>;
   equity_curve: Array<{
     timestamp: string;
