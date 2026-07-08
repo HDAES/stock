@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
-from stock_quant.intraday_report import write_intraday_report
+from stock_quant.intraday_report import read_intraday_report, write_intraday_report
 
 
 def test_write_intraday_report_creates_expected_files(tmp_path: Path) -> None:
@@ -54,6 +55,34 @@ def test_write_intraday_report_creates_expected_files(tmp_path: Path) -> None:
     equity = pd.read_csv(tmp_path / "equity_curve.csv")
     assert equity.loc[0, "timestamp"] == "2024-01-02T09:30:00"
     assert "AAPL.US" in equity.loc[0, "positions"]
+
+
+def test_read_intraday_report_round_trips_written_files(tmp_path: Path) -> None:
+    result = {
+        "metrics": {"final_equity": 101000.0, "total_return": 0.01},
+        "equity_curve": [
+            {
+                "timestamp": "2024-01-02T09:30:00",
+                "equity": 100000.0,
+                "positions": {"AAPL.US": {"quantity": 10}},
+            }
+        ],
+        "daily_summary": [],
+        "trades": [],
+        "signals": [],
+    }
+
+    write_intraday_report(result, tmp_path)
+    loaded = read_intraday_report(tmp_path)
+
+    assert loaded["metrics"] == result["metrics"]
+    assert loaded["equity_curve"][0]["timestamp"] == "2024-01-02T09:30:00"
+    assert loaded["equity_curve"][0]["positions"] == {"AAPL.US": {"quantity": 10}}
+
+
+def test_read_intraday_report_raises_for_missing_report(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        read_intraday_report(tmp_path)
 
 
 def test_write_intraday_report_writes_empty_csv_for_empty_sections(tmp_path: Path) -> None:
