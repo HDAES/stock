@@ -66,6 +66,7 @@ function App() {
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [intraday, setIntraday] = useState<IntradayState | null>(null);
   const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
+  const [selectedBacktestSymbols, setSelectedBacktestSymbols] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
@@ -77,6 +78,8 @@ function App() {
       .then(([configPayload, symbolPayload]) => {
         setConfig(configPayload);
         setSymbols(symbolPayload);
+        const configuredIntradaySymbols = getIntradayConfigSymbols(configPayload);
+        setSelectedBacktestSymbols(configuredIntradaySymbols);
         const preferred = symbolPayload.cached.includes("TSLA.US") ? "TSLA.US" : symbolPayload.cached[0] ?? configPayload.universe[0];
         setSymbol(preferred);
       })
@@ -131,6 +134,7 @@ function App() {
   }, [view]);
 
   const selectedRank = useMemo(() => rank.find((row) => row.symbol === symbol), [rank, symbol]);
+  const intradayConfigSymbols = useMemo(() => getIntradayConfigSymbols(config), [config]);
   const t = copy[language];
 
   function toggleLanguage() {
@@ -187,10 +191,14 @@ function App() {
   }
 
   async function runIntradayBacktest() {
+    if (selectedBacktestSymbols.length === 0) {
+      setError("请至少选择一个日内回测标的");
+      return;
+    }
     setRunningBacktest(true);
     setError(null);
     try {
-      const payload = await api.intradayBacktest();
+      const payload = await api.intradayBacktest(selectedBacktestSymbols);
       setIntradayReport(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Intraday backtest failed");
@@ -228,7 +236,17 @@ function App() {
         {!loading && view === "stock" && summary && <StockView t={t} summary={summary} klines={klines} rankRow={selectedRank} benchmark={config?.benchmark ?? "SPY.US"} />}
         {!loading && view === "strategy" && backtest && <StrategyView t={t} rank={rank} backtest={backtest} topN={Number(config?.strategy.top_n ?? 10)} />}
         {!loading && view === "intraday" && intraday && <IntradayView t={t} state={intraday} evaluating={evaluating} onEvaluate={evaluateIntraday} />}
-        {!loading && view === "intradayBacktest" && <IntradayBacktestView t={t} report={intradayReport} runningBacktest={runningBacktest} onRunBacktest={runIntradayBacktest} />}
+        {!loading && view === "intradayBacktest" && (
+          <IntradayBacktestView
+            t={t}
+            report={intradayReport}
+            configuredSymbols={intradayConfigSymbols}
+            selectedSymbols={selectedBacktestSymbols}
+            onSelectedSymbolsChange={setSelectedBacktestSymbols}
+            runningBacktest={runningBacktest}
+            onRunBacktest={runIntradayBacktest}
+          />
+        )}
       </main>
     </div>
   );
@@ -287,20 +305,49 @@ function IntradayView({ t, state, evaluating, onEvaluate }: { t: Copy; state: In
   );
 }
 
-function IntradayBacktestView({ t, report, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; runningBacktest: boolean; onRunBacktest: () => void }) {
+function IntradayBacktestView({ t, report, configuredSymbols, selectedSymbols, onSelectedSymbolsChange, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; configuredSymbols: string[]; selectedSymbols: string[]; onSelectedSymbolsChange: (symbols: string[]) => void; runningBacktest: boolean; onRunBacktest: () => void }) {
   return (
     <section className="stack">
       <div className="title-row"><div><p className="eyebrow">{t.intradayBacktest}</p><h1>{t.intradayBacktestReport}</h1></div></div>
-      <IntradayReportView t={t} report={report} runningBacktest={runningBacktest} onRunBacktest={onRunBacktest} />
+      <BacktestSymbolFilter t={t} symbols={configuredSymbols} selectedSymbols={selectedSymbols} onChange={onSelectedSymbolsChange} />
+      <IntradayReportView t={t} report={report} selectedSymbols={selectedSymbols} runningBacktest={runningBacktest} onRunBacktest={onRunBacktest} />
     </section>
   );
 }
 
-function IntradayReportView({ t, report, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; runningBacktest: boolean; onRunBacktest: () => void }) {
+function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Copy; symbols: string[]; selectedSymbols: string[]; onChange: (symbols: string[]) => void }) {
+  function toggleSymbol(symbol: string) {
+    if (selectedSymbols.includes(symbol)) {
+      onChange(selectedSymbols.filter((item) => item !== symbol));
+    } else {
+      onChange([...selectedSymbols, symbol].sort());
+    }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-header"><h2>{t.backtestStockFilter}</h2><span>{selectedSymbols.length} / {symbols.length}</span></div>
+      <p className="muted">{t.autoFetchHint}</p>
+      <div className="symbol-chips">
+        {symbols.map((item) => (
+          <label key={item} className="text-button">
+            <input type="checkbox" checked={selectedSymbols.includes(item)} onChange={() => toggleSymbol(item)} /> {item}
+          </label>
+        ))}
+      </div>
+      <div className="topbar-actions">
+        <button className="text-button" onClick={() => onChange(symbols)}>{t.selectAll}</button>
+        <button className="text-button" onClick={() => onChange([])}>{t.clearSelection}</button>
+      </div>
+    </div>
+  );
+}
+
+function IntradayReportView({ t, report, selectedSymbols, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; selectedSymbols: string[]; runningBacktest: boolean; onRunBacktest: () => void }) {
   const [dailyPage, setDailyPage] = useState(1);
   const [tradePage, setTradePage] = useState(1);
   const [signalPage, setSignalPage] = useState(1);
-  const runButton = <button className="text-button wide" onClick={onRunBacktest} disabled={runningBacktest}>{runningBacktest ? <Loader2 className="spin" size={17} /> : <BarChart3 size={17} />}{runningBacktest ? t.runningIntradayBacktest : t.runIntradayBacktest}</button>;
+  const runButton = <button className="text-button wide" onClick={onRunBacktest} disabled={runningBacktest || selectedSymbols.length === 0}>{runningBacktest ? <Loader2 className="spin" size={17} /> : <BarChart3 size={17} />}{runningBacktest ? t.runningIntradayBacktest : t.runIntradayBacktest}</button>;
 
   useEffect(() => {
     setDailyPage(1);
@@ -309,7 +356,7 @@ function IntradayReportView({ t, report, runningBacktest, onRunBacktest }: { t: 
   }, [report?.generated_at, report?.report_dir]);
 
   if (!report) {
-    return <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.noIntradayReport}</p></div>;
+    return <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.noIntradayReport}</p><p className="muted">{t.selectedForBacktest}: {selectedSymbols.join(", ") || "-"}</p></div>;
   }
 
   const dailyRowsAll = report.daily_summary.slice().reverse();
@@ -321,7 +368,7 @@ function IntradayReportView({ t, report, runningBacktest, onRunBacktest }: { t: 
 
   return (
     <>
-      <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.reportDirectory}: {report.report_dir}</p><div className="metric-grid compact"><Metric label={t.generatedAt} value={formatDateTime(report.generated_at)} /><Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} /><Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} /><Metric label={t.maxDrawdown} value={formatPercent(report.metrics.max_drawdown)} /><Metric label={t.winRate} value={formatPercent(report.metrics.win_rate)} /><Metric label={t.profitFactor} value={formatNumber(report.metrics.profit_factor)} /><Metric label={t.tradeCount} value={formatNumber(report.metrics.trade_count, 0)} /></div></div>
+      <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.reportDirectory}: {report.report_dir}</p><p className="muted">{t.selectedForBacktest}: {(report.symbols ?? selectedSymbols).join(", ") || "-"}</p>{report.auto_fetched_symbols && report.auto_fetched_symbols.length > 0 && <p className="muted">{t.autoFetchedSymbols}: {report.auto_fetched_symbols.join(", ")} · {report.auto_fetch_count ?? 1000}</p>}<div className="metric-grid compact"><Metric label={t.generatedAt} value={formatDateTime(report.generated_at)} /><Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} /><Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} /><Metric label={t.maxDrawdown} value={formatPercent(report.metrics.max_drawdown)} /><Metric label={t.winRate} value={formatPercent(report.metrics.win_rate)} /><Metric label={t.profitFactor} value={formatNumber(report.metrics.profit_factor)} /><Metric label={t.tradeCount} value={formatNumber(report.metrics.trade_count, 0)} /></div></div>
       <div className="panel chart-panel"><div className="panel-header"><h2>{t.equityCurve}</h2><span>{t.intradayBacktestReport}</span></div><ResponsiveContainer width="100%" height={320}><AreaChart data={report.equity_curve}><defs><linearGradient id="intradayEquityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={0.28} /><stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="timestamp" minTickGap={32} tickFormatter={(value) => formatShortTime(String(value))} /><YAxis domain={["auto", "auto"]} /><Tooltip labelFormatter={(value) => formatDateTime(String(value))} formatter={(value) => formatNumber(Number(value), 2)} /><Area type="monotone" dataKey="equity" stroke="#0f766e" fill="url(#intradayEquityFill)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div>
       <div className="panel table-panel"><div className="panel-header"><h2>{t.dailySummary}</h2><span>{dailyRowsAll.length}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>Day</th><th>{t.startEquity}</th><th>{t.endEquity}</th><th>{t.dailyReturn}</th><th>{t.maxDrawdown}</th><th>{t.tradeCount}</th></tr></thead><tbody>{dailyRows.map((row, index) => <tr key={`${recordString(row, "day")}-${index}`}><td>{recordString(row, "day")}</td><td>{formatNumber(recordNumber(row, "start_equity"))}</td><td>{formatNumber(recordNumber(row, "end_equity"))}</td><td>{formatPercent(recordNumber(row, "daily_return"))}</td><td>{formatPercent(recordNumber(row, "max_drawdown"))}</td><td>{formatNumber(recordNumber(row, "trade_count"), 0)}</td></tr>)}</tbody></table></div><Pagination page={dailyPage} total={dailyRowsAll.length} onChange={setDailyPage} /></div>
       <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.latestBacktestTrades}</h2><span>{tradesAll.length}</span></div><TradeTable t={t} trades={trades} /><Pagination page={tradePage} total={tradesAll.length} onChange={setTradePage} /></div><div className="panel table-panel"><div className="panel-header"><h2>{t.backtestSignals}</h2><span>{signalsAll.length}</span></div><SignalTable t={t} signals={signals} /><Pagination page={signalPage} total={signalsAll.length} onChange={setSignalPage} /></div></div>
@@ -372,6 +419,12 @@ function recordString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (value === null || value === undefined) return "-";
   return String(value);
+}
+
+function getIntradayConfigSymbols(config: AppConfig | null): string[] {
+  const raw = config?.intraday.symbols;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => String(item).trim().toUpperCase()).filter(Boolean).sort();
 }
 
 function formatDateTime(value: string | null | undefined): string {
