@@ -8,7 +8,7 @@ import pandas as pd
 
 from .cache import symbol_to_filename
 from .config import AppConfig
-from .intraday import extract_watchlist_symbols, normalize_intraday_kline
+from .intraday import normalize_intraday_kline
 from .longbridge import LongbridgeClient
 
 
@@ -20,8 +20,6 @@ class IntradayDataClient(Protocol):
         period: str = "5m",
         session: str = "intraday",
     ) -> list[dict]: ...
-
-    def watchlist(self) -> dict | list[dict]: ...
 
 
 def intraday_history_path(data_dir: str | Path, symbol: str, period: str) -> Path:
@@ -42,6 +40,26 @@ def cached_intraday_symbols(data_dir: str | Path, period: str) -> list[str]:
     return _dedupe_symbols(symbols)
 
 
+def configured_intraday_symbols(
+    config: AppConfig,
+    explicit_symbols: list[str] | None = None,
+) -> list[str]:
+    """Return the configured intraday stock list.
+
+    Intraday fetch, live/paper scans, and backtests should be bounded by the
+    user's explicit intraday configuration. Command-line/API symbols are still
+    allowed as an explicit override, but otherwise we do not fall back to the
+    Longbridge watchlist or the broader daily-strategy universe.
+    """
+    symbols = _dedupe_symbols(explicit_symbols or config.intraday.symbols)
+    if not symbols:
+        raise ValueError(
+            "No intraday symbols configured. Add symbols under intraday.symbols in config/default.json "
+            "or pass --symbols explicitly."
+        )
+    return symbols
+
+
 def resolve_intraday_backtest_symbols(
     config: AppConfig,
     data_dir: str | Path,
@@ -49,51 +67,27 @@ def resolve_intraday_backtest_symbols(
 ) -> list[str]:
     """Resolve symbols for local intraday backtests.
 
-    Backtests run from local files. If symbols are omitted, prefer the files
-    that actually exist under ``data_dir`` so a partially cached universe can
-    still be backtested.
+    Backtests are intentionally limited to ``config.intraday.symbols`` by
+    default. Existing cache files for other symbols are ignored unless those
+    symbols are configured or explicitly passed.
     """
-    if explicit_symbols:
-        return _dedupe_symbols(explicit_symbols)
-
-    cached = cached_intraday_symbols(data_dir, config.intraday.period)
-    if cached:
-        return cached
-    if config.intraday.symbols:
-        return _dedupe_symbols(config.intraday.symbols)
-    return _dedupe_symbols(config.universe)
+    return configured_intraday_symbols(config, explicit_symbols)
 
 
 def resolve_intraday_symbols(
     config: AppConfig,
     explicit_symbols: list[str] | None = None,
     client: IntradayDataClient | None = None,
-    prefer_watchlist: bool = True,
+    prefer_watchlist: bool = False,
 ) -> list[str]:
-    """Resolve the symbols to use for intraday fetch/backtest.
+    """Resolve symbols for intraday data fetches.
 
-    Priority:
-    1. explicit command-line symbols
-    2. Longbridge watchlist, when enabled and available
-    3. config.intraday.symbols
-    4. config.universe
+    By default this returns only ``config.intraday.symbols``. ``client`` and
+    ``prefer_watchlist`` are accepted for backwards-compatible call sites but
+    are intentionally ignored so the intraday universe stays configuration-led.
     """
-    if explicit_symbols:
-        return _dedupe_symbols(explicit_symbols)
-
-    symbols: list[str] = []
-    if prefer_watchlist:
-        longbridge = client or LongbridgeClient()
-        try:
-            symbols = extract_watchlist_symbols(longbridge.watchlist())
-        except Exception:
-            symbols = []
-
-    if not symbols:
-        symbols = list(config.intraday.symbols)
-    if not symbols:
-        symbols = list(config.universe)
-    return _dedupe_symbols(symbols)
+    _ = client, prefer_watchlist
+    return configured_intraday_symbols(config, explicit_symbols)
 
 
 def merge_intraday_history(
