@@ -38,6 +38,7 @@ class PaperPortfolio:
     trades: list[dict[str, Any]] = field(default_factory=list)
     last_signals: list[dict[str, Any]] = field(default_factory=list)
     daily_stop: bool = False
+    processed_intraday_bars: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def empty(cls, initial_cash: float, day: str | None = None) -> "PaperPortfolio":
@@ -78,6 +79,10 @@ class PaperPortfolio:
             trades=list(data.get("trades", [])),
             last_signals=list(data.get("last_signals", [])),
             daily_stop=bool(data.get("daily_stop", False)),
+            processed_intraday_bars={
+                str(symbol).upper(): str(timestamp)
+                for symbol, timestamp in data.get("processed_intraday_bars", {}).items()
+            },
         )
         if portfolio.day != current_day:
             portfolio.day = current_day
@@ -181,4 +186,5 @@ class PaperPortfolio:
             "positions": {symbol: position.to_dict() for symbol, position in self.positions.items()},
             "trades": self.trades[-100:],
             "last_signals": self.last_signals[-100:],
+            "processed_intraday_bars": self.processed_intraday_bars,
         }
