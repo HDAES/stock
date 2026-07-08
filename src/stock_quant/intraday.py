@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from datetime import time
 from typing import Any
 
 import pandas as pd
@@ -12,6 +13,8 @@ from .config import IntradayConfig
 
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]+\.US$")
 MARKET_TIMEZONE = "America/New_York"
+REGULAR_MARKET_OPEN = time(9, 30)
+REGULAR_MARKET_CLOSE = time(16, 0)
 OPEN_STATUS_WORDS = {"open", "trading", "trade", "normal", "regular"}
 CLOSED_STATUS_WORDS = {"closed", "close", "休市"}
 
@@ -63,7 +66,11 @@ def normalize_intraday_kline(payload: list[dict], symbol: str) -> pd.DataFrame:
         frame["volume"] = 0.0
 
     frame["symbol"] = symbol
-    return frame.sort_values("date").dropna(subset=["close"]).reset_index(drop=True)
+    frame = frame.dropna(subset=["date", "close"])
+    frame = frame[frame["date"].map(is_regular_market_time)]
+    if frame.empty:
+        raise ValueError(f"No regular-session intraday bars for {symbol}")
+    return frame.sort_values("date").reset_index(drop=True)
 
 
 def normalize_intraday_datetime(values: pd.Series, source_column: str = "date") -> pd.Series:
@@ -95,6 +102,17 @@ def normalize_intraday_datetime(values: pd.Series, source_column: str = "date") 
     if timezone is not None:
         return parsed.dt.tz_convert(MARKET_TIMEZONE).dt.tz_localize(None)
     return parsed
+
+
+def is_regular_market_time(value: Any) -> bool:
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return False
+    if pd.isna(timestamp):
+        return False
+    clock = timestamp.time()
+    return REGULAR_MARKET_OPEN <= clock <= REGULAR_MARKET_CLOSE
 
 
 def add_intraday_indicators(frame: pd.DataFrame) -> pd.DataFrame:
@@ -145,6 +163,10 @@ def evaluate_trend_signal(
 
     if price is None:
         return _signal(symbol, "HOLD", "missing_price", None, timestamp, {})
+    if not is_regular_market_time(latest.get("date")):
+        return _signal(symbol, "HOLD", "outside_regular_session", price, timestamp, latest)
+    if not market_open:
+        return _signal(symbol, "HOLD", "market_closed", price, timestamp, latest)
 
     if has_position and entry_price:
         if price <= entry_price * (1 - config.stop_loss_pct):
@@ -157,8 +179,6 @@ def evaluate_trend_signal(
             return _signal(symbol, "SELL", "close_below_vwap", price, timestamp, latest)
         return _signal(symbol, "HOLD", "position_held", price, timestamp, latest)
 
-    if not market_open:
-        return _signal(symbol, "HOLD", "market_closed", price, timestamp, latest)
     if daily_stop:
         return _signal(symbol, "HOLD", "daily_loss_limit_reached", price, timestamp, latest)
 
