@@ -1,4 +1,4 @@
-import type { AppConfig, BacktestResult, IntradayState, KlinePoint, RankRow, StockSummary, SymbolList } from "./types";
+import type { AppConfig, BacktestResult, IntradayReport, IntradayState, KlinePoint, RankRow, StockSummary, SymbolList } from "./types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options);
@@ -29,5 +29,6 @@ export const api = {
   rank: () => request<RankRow[]>("/api/strategy/rank"),
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
   intradayState: () => request<IntradayState>("/api/intraday/state"),
+  intradayReport: () => request<IntradayReport>("/api/intraday/report"),
   intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" })
 };
