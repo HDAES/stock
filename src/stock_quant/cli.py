@@ -12,7 +12,7 @@ from .cache import DataCache
 from .config import load_config
 from .factors import build_factor_table
 from .intraday_backtest import intraday_backtest, load_intraday_history
-from .intraday_data import fetch_intraday_history, resolve_intraday_symbols
+from .intraday_data import fetch_intraday_history, resolve_intraday_backtest_symbols, resolve_intraday_symbols
 from .intraday_report import write_intraday_report
 
 
@@ -181,8 +181,8 @@ def run_intraday_watch(args: argparse.Namespace) -> None:
 
 def run_intraday_backtest(args: argparse.Namespace) -> None:
     config = load_config(args.config)
-    symbols = [symbol.upper() for symbol in (args.symbols or config.intraday.symbols or config.universe)]
     data_dir = args.data_dir or config.intraday.data_dir
+    symbols = resolve_intraday_backtest_symbols(config, data_dir, explicit_symbols=args.symbols)
     commission_bps = config.intraday.commission_bps if args.commission_bps is None else args.commission_bps
     slippage_bps = config.intraday.slippage_bps if args.slippage_bps is None else args.slippage_bps
 
