@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,7 @@ def read_intraday_report(report_dir: str | Path) -> dict[str, Any]:
 
     return {
         "report_dir": str(root),
+        "generated_at": datetime.fromtimestamp(metrics_path.stat().st_mtime).isoformat(timespec="seconds"),
         "metrics": json.loads(metrics_path.read_text() or "{}"),
         "equity_curve": _read_records_csv(root / REPORT_FILENAMES["equity_curve"]),
         "daily_summary": _read_records_csv(root / REPORT_FILENAMES["daily_summary"]),
