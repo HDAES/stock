@@ -38,6 +38,9 @@ class IntradayConfig:
     volume_lookback: int
     volume_multiplier: float
     symbols: list[str]
+    data_dir: Path = Path("data/intraday/kline")
+    commission_bps: float = 0.0
+    slippage_bps: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,13 @@ class AppConfig:
     factor_weights: dict[str, float]
 
 
+def _resolve_config_path(config_path: Path, value: str | Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (config_path.parent / ".." / path).resolve()
+
+
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
     raw = json.loads(config_path.read_text())
@@ -60,7 +70,7 @@ def load_config(path: str | Path) -> AppConfig:
         benchmark=raw["benchmark"],
         universe=list(raw["universe"]),
         data=DataConfig(
-            cache_dir=(config_path.parent / ".." / data["cache_dir"]).resolve(),
+            cache_dir=_resolve_config_path(config_path, data["cache_dir"]),
             history_count=int(data["history_count"]),
         ),
         strategy=StrategyConfig(
@@ -87,6 +97,9 @@ def load_config(path: str | Path) -> AppConfig:
             volume_lookback=int(intraday.get("volume_lookback", 12)),
             volume_multiplier=float(intraday.get("volume_multiplier", 1.5)),
             symbols=[str(symbol).upper() for symbol in intraday.get("symbols", [])],
+            data_dir=_resolve_config_path(config_path, intraday.get("data_dir", "data/intraday/kline")),
+            commission_bps=float(intraday.get("commission_bps", 0.0)),
+            slippage_bps=float(intraday.get("slippage_bps", 0.0)),
         ),
         factor_weights={key: float(value) for key, value in raw["factor_weights"].items()},
     )
