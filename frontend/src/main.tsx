@@ -41,6 +41,7 @@ import type {
 import "./styles.css";
 
 type View = "stock" | "strategy" | "intraday";
+const REPORT_PAGE_SIZE = 20;
 
 function App() {
   const [view, setView] = useState<View>(
@@ -273,22 +274,34 @@ function IntradayView({ t, state, report, evaluating, runningBacktest, onEvaluat
 }
 
 function IntradayReportView({ t, report, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; runningBacktest: boolean; onRunBacktest: () => void }) {
+  const [dailyPage, setDailyPage] = useState(1);
+  const [tradePage, setTradePage] = useState(1);
+  const [signalPage, setSignalPage] = useState(1);
   const runButton = <button className="text-button wide" onClick={onRunBacktest} disabled={runningBacktest}>{runningBacktest ? <Loader2 className="spin" size={17} /> : <BarChart3 size={17} />}{runningBacktest ? t.runningIntradayBacktest : t.runIntradayBacktest}</button>;
+
+  useEffect(() => {
+    setDailyPage(1);
+    setTradePage(1);
+    setSignalPage(1);
+  }, [report?.generated_at, report?.report_dir]);
 
   if (!report) {
     return <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.noIntradayReport}</p></div>;
   }
 
-  const dailyRows = report.daily_summary.slice().reverse();
-  const trades = report.trades.slice().reverse();
-  const signals = report.signals.filter((signal) => signal.action !== "HOLD").slice().reverse();
+  const dailyRowsAll = report.daily_summary.slice().reverse();
+  const tradesAll = report.trades.slice().reverse();
+  const signalsAll = report.signals.filter((signal) => signal.action !== "HOLD").slice().reverse();
+  const dailyRows = paginate(dailyRowsAll, dailyPage);
+  const trades = paginate(tradesAll, tradePage);
+  const signals = paginate(signalsAll, signalPage);
 
   return (
     <>
       <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div><p className="muted">{t.reportDirectory}: {report.report_dir}</p><div className="metric-grid compact"><Metric label={t.generatedAt} value={formatDateTime(report.generated_at)} /><Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} /><Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} /><Metric label={t.maxDrawdown} value={formatPercent(report.metrics.max_drawdown)} /><Metric label={t.winRate} value={formatPercent(report.metrics.win_rate)} /><Metric label={t.profitFactor} value={formatNumber(report.metrics.profit_factor)} /><Metric label={t.tradeCount} value={formatNumber(report.metrics.trade_count, 0)} /></div></div>
       <div className="panel chart-panel"><div className="panel-header"><h2>{t.equityCurve}</h2><span>{t.intradayBacktestReport}</span></div><ResponsiveContainer width="100%" height={320}><AreaChart data={report.equity_curve}><defs><linearGradient id="intradayEquityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={0.28} /><stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="timestamp" minTickGap={32} tickFormatter={(value) => formatShortTime(String(value))} /><YAxis domain={["auto", "auto"]} /><Tooltip labelFormatter={(value) => formatDateTime(String(value))} formatter={(value) => formatNumber(Number(value), 2)} /><Area type="monotone" dataKey="equity" stroke="#0f766e" fill="url(#intradayEquityFill)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div>
-      <div className="panel table-panel"><div className="panel-header"><h2>{t.dailySummary}</h2><span>{dailyRows.length}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>Day</th><th>{t.startEquity}</th><th>{t.endEquity}</th><th>{t.dailyReturn}</th><th>{t.maxDrawdown}</th><th>{t.tradeCount}</th></tr></thead><tbody>{dailyRows.map((row, index) => <tr key={`${recordString(row, "day")}-${index}`}><td>{recordString(row, "day")}</td><td>{formatNumber(recordNumber(row, "start_equity"))}</td><td>{formatNumber(recordNumber(row, "end_equity"))}</td><td>{formatPercent(recordNumber(row, "daily_return"))}</td><td>{formatPercent(recordNumber(row, "max_drawdown"))}</td><td>{formatNumber(recordNumber(row, "trade_count"), 0)}</td></tr>)}</tbody></table></div></div>
-      <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.latestBacktestTrades}</h2><span>{trades.length}</span></div><TradeTable t={t} trades={trades} /></div><div className="panel table-panel"><div className="panel-header"><h2>{t.backtestSignals}</h2><span>{signals.length}</span></div><SignalTable t={t} signals={signals} /></div></div>
+      <div className="panel table-panel"><div className="panel-header"><h2>{t.dailySummary}</h2><span>{dailyRowsAll.length}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>Day</th><th>{t.startEquity}</th><th>{t.endEquity}</th><th>{t.dailyReturn}</th><th>{t.maxDrawdown}</th><th>{t.tradeCount}</th></tr></thead><tbody>{dailyRows.map((row, index) => <tr key={`${recordString(row, "day")}-${index}`}><td>{recordString(row, "day")}</td><td>{formatNumber(recordNumber(row, "start_equity"))}</td><td>{formatNumber(recordNumber(row, "end_equity"))}</td><td>{formatPercent(recordNumber(row, "daily_return"))}</td><td>{formatPercent(recordNumber(row, "max_drawdown"))}</td><td>{formatNumber(recordNumber(row, "trade_count"), 0)}</td></tr>)}</tbody></table></div><Pagination page={dailyPage} total={dailyRowsAll.length} onChange={setDailyPage} /></div>
+      <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.latestBacktestTrades}</h2><span>{tradesAll.length}</span></div><TradeTable t={t} trades={trades} /><Pagination page={tradePage} total={tradesAll.length} onChange={setTradePage} /></div><div className="panel table-panel"><div className="panel-header"><h2>{t.backtestSignals}</h2><span>{signalsAll.length}</span></div><SignalTable t={t} signals={signals} /><Pagination page={signalPage} total={signalsAll.length} onChange={setSignalPage} /></div></div>
     </>
   );
 }
@@ -299,6 +312,23 @@ function SignalTable({ t, signals }: { t: Copy; signals: IntradaySignal[] }) {
 
 function TradeTable({ t, trades }: { t: Copy; trades: Array<Record<string, string | number | null>> }) {
   return <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.time}</th><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => <tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{formatDateTime(recordString(trade, "timestamp"))}</td><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>)}</tbody></table></div>;
+}
+
+function Pagination({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / REPORT_PAGE_SIZE));
+  if (total <= REPORT_PAGE_SIZE) return null;
+  return (
+    <div className="pagination">
+      <button className="text-button" disabled={page <= 1} onClick={() => onChange(Math.max(1, page - 1))}>上一页</button>
+      <span>{page} / {pages} · {total} 条 · 每页 {REPORT_PAGE_SIZE} 条</span>
+      <button className="text-button" disabled={page >= pages} onClick={() => onChange(Math.min(pages, page + 1))}>下一页</button>
+    </div>
+  );
+}
+
+function paginate<T>(records: T[], page: number): T[] {
+  const start = (page - 1) * REPORT_PAGE_SIZE;
+  return records.slice(start, start + REPORT_PAGE_SIZE);
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
