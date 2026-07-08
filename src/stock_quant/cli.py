@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .analysis import evaluate_intraday, load_strategy_inputs, strategy_backtest
+from .analysis import CacheMissError, evaluate_intraday, load_strategy_inputs, strategy_backtest
 from .cache import DataCache
 from .config import load_config
 from .factors import build_factor_table
@@ -28,9 +28,19 @@ def main() -> None:
 
     rank_parser = subparsers.add_parser("rank", help="Rank symbols using cached data")
     rank_parser.add_argument("--config", default="config/default.json")
+    rank_parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Fail instead of fetching missing strategy cache files",
+    )
 
     backtest_parser = subparsers.add_parser("backtest", help="Run a first-pass cached-data backtest")
     backtest_parser.add_argument("--config", default="config/default.json")
+    backtest_parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Fail instead of fetching missing strategy cache files",
+    )
 
     intraday_fetch_parser = subparsers.add_parser(
         "intraday-fetch",
@@ -101,10 +111,26 @@ def run_fetch(args: argparse.Namespace) -> None:
         print(f"cached {symbol}")
 
 
+def ensure_strategy_cache(cache: DataCache, config) -> None:
+    symbols = list(dict.fromkeys([*config.universe, config.benchmark]))
+    print("Missing cached strategy data detected. Fetching configured universe and benchmark...")
+    for symbol in symbols:
+        cache.fetch_kline(symbol, count=config.data.history_count, refresh=False)
+        if symbol in config.universe:
+            cache.fetch_calc_index(symbol, refresh=False)
+        print(f"cached {symbol}")
+
+
 def run_rank(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     cache = DataCache(config.data.cache_dir)
-    prices, calc_indexes = load_strategy_inputs(cache, config)
+    try:
+        prices, calc_indexes = load_strategy_inputs(cache, config)
+    except CacheMissError as exc:
+        if args.cache_only:
+            raise SystemExit(str(exc)) from exc
+        ensure_strategy_cache(cache, config)
+        prices, calc_indexes = load_strategy_inputs(cache, config)
     factor_table = build_factor_table(
         prices,
         calc_indexes,
@@ -118,7 +144,13 @@ def run_rank(args: argparse.Namespace) -> None:
 def run_backtest(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     cache = DataCache(config.data.cache_dir)
-    result = strategy_backtest(config, cache)
+    try:
+        result = strategy_backtest(config, cache)
+    except CacheMissError as exc:
+        if args.cache_only:
+            raise SystemExit(str(exc)) from exc
+        ensure_strategy_cache(cache, config)
+        result = strategy_backtest(config, cache)
 
     print("Selected symbols:")
     print(", ".join(result["selected_symbols"]))
