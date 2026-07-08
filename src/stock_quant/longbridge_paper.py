@@ -32,9 +32,9 @@ class LongbridgePaperTradingClient:
         return {
             "fetched_at": datetime.now().isoformat(timespec="seconds"),
             "mode": "current_cli_account",
-            "account": self.account(),
-            "positions": self.positions(),
-            "orders": self.orders(),
+            "account": self._safe_call(self.account),
+            "positions": self._safe_call(self.positions),
+            "orders": self._safe_call(self.orders),
         }
 
     def account(self) -> Any:
@@ -53,33 +53,70 @@ class LongbridgePaperTradingClient:
 
     def orders(self) -> Any:
         return self._run_first_json([
-            ["orders"],
-            ["order-list"],
-            ["today-orders"],
+            ["order"],
+            ["order", "list"],
+            ["order", "today"],
+            ["order", "history"],
+            ["trades"],
         ])
 
     def submit_order(self, request: PaperOrderRequest) -> Any:
-        args = [
-            "submit-order",
-            request.symbol.upper(),
-            "--side",
-            request.side.lower(),
-            "--quantity",
-            str(request.quantity),
-            "--order-type",
-            request.order_type.lower(),
-            "--time-in-force",
-            request.time_in_force.lower(),
+        candidates = [
+            [
+                "order",
+                request.symbol.upper(),
+                "--side",
+                request.side.lower(),
+                "--quantity",
+                str(request.quantity),
+                "--order-type",
+                request.order_type.lower(),
+                "--time-in-force",
+                request.time_in_force.lower(),
+            ],
+            [
+                "order",
+                "submit",
+                request.symbol.upper(),
+                "--side",
+                request.side.lower(),
+                "--quantity",
+                str(request.quantity),
+                "--order-type",
+                request.order_type.lower(),
+                "--time-in-force",
+                request.time_in_force.lower(),
+            ],
+            [
+                "submit-order",
+                request.symbol.upper(),
+                "--side",
+                request.side.lower(),
+                "--quantity",
+                str(request.quantity),
+                "--order-type",
+                request.order_type.lower(),
+                "--time-in-force",
+                request.time_in_force.lower(),
+            ],
         ]
         if request.price is not None:
-            args.extend(["--price", str(request.price)])
-        return self.client.run_json(args)
+            candidates = [candidate + ["--price", str(request.price)] for candidate in candidates]
+        return self._run_first_json(candidates)
 
     def cancel_order(self, order_id: str) -> Any:
         return self._run_first_json([
+            ["order", "cancel", order_id],
+            ["order", "cancel-order", order_id],
             ["cancel-order", order_id],
             ["order-cancel", order_id],
         ])
+
+    def _safe_call(self, fn: Any) -> dict[str, Any]:
+        try:
+            return {"ok": True, "data": fn()}
+        except LongbridgeError as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _run_first_json(self, candidates: list[list[str]]) -> Any:
         errors: list[str] = []
