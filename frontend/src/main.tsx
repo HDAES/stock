@@ -532,6 +532,7 @@ function IntradayReportView({
         <div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div>
         <p className="muted">{t.reportDirectory}: {report.report_dir}</p>
         <div className="metric-grid compact">
+          <Metric label={t.generatedAt} value={formatDateTime(report.generated_at)} />
           <Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} />
           <Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} />
           <Metric label={t.maxDrawdown} value={formatPercent(report.metrics.max_drawdown)} />
@@ -547,9 +548,9 @@ function IntradayReportView({
           <AreaChart data={report.equity_curve}>
             <defs><linearGradient id="intradayEquityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={0.28} /><stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} /></linearGradient></defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="timestamp" minTickGap={32} tickFormatter={(value) => String(value).slice(5, 16)} />
+            <XAxis dataKey="timestamp" minTickGap={32} tickFormatter={(value) => formatShortTime(String(value))} />
             <YAxis domain={["auto", "auto"]} />
-            <Tooltip formatter={(value) => formatNumber(Number(value), 2)} />
+            <Tooltip labelFormatter={(value) => formatDateTime(String(value))} formatter={(value) => formatNumber(Number(value), 2)} />
             <Area type="monotone" dataKey="equity" stroke="#0f766e" fill="url(#intradayEquityFill)" strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
@@ -570,13 +571,13 @@ function IntradayReportView({
 
 function SignalTable({ t, signals }: { t: Copy; signals: IntradaySignal[] }) {
   return (
-    <div className="table-scroll"><table><thead><tr><th>{t.symbol}</th><th>{t.action}</th><th>{t.reason}</th><th>{t.price}</th><th>VWAP</th><th>EMA9</th><th>EMA21</th></tr></thead><tbody>{signals.map((signal, index) => (<tr key={`${signal.symbol}-${signal.timestamp ?? signal.evaluated_at}-${index}`}><td>{signal.symbol}</td><td><span className={`action-badge ${signal.action.toLowerCase()}`}>{signal.action}</span></td><td>{signal.reason}</td><td>{formatNumber(signal.execution_price ?? signal.price)}</td><td>{formatNumber(signal.indicators?.vwap)}</td><td>{formatNumber(signal.indicators?.ema9)}</td><td>{formatNumber(signal.indicators?.ema21)}</td></tr>))}</tbody></table></div>
+    <div className="table-scroll"><table><thead><tr><th>{t.time}</th><th>{t.symbol}</th><th>{t.action}</th><th>{t.reason}</th><th>{t.price}</th><th>VWAP</th><th>EMA9</th><th>EMA21</th></tr></thead><tbody>{signals.map((signal, index) => (<tr key={`${signal.symbol}-${signal.timestamp ?? signal.evaluated_at}-${index}`}><td>{formatDateTime(signal.timestamp ?? signal.evaluated_at)}</td><td>{signal.symbol}</td><td><span className={`action-badge ${signal.action.toLowerCase()}`}>{signal.action}</span></td><td>{signal.reason}</td><td>{formatNumber(signal.execution_price ?? signal.price)}</td><td>{formatNumber(signal.indicators?.vwap)}</td><td>{formatNumber(signal.indicators?.ema9)}</td><td>{formatNumber(signal.indicators?.ema21)}</td></tr>))}</tbody></table></div>
   );
 }
 
 function TradeTable({ t, trades }: { t: Copy; trades: Array<Record<string, string | number | null>> }) {
   return (
-    <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => (<tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>))}</tbody></table></div>
+    <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.time}</th><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => (<tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{formatDateTime(recordString(trade, "timestamp"))}</td><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>))}</tbody></table></div>
   );
 }
 
@@ -598,6 +599,28 @@ function recordString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (value === null || value === undefined) return "-";
   return String(value);
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value || value === "-") return "-";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleString(undefined, {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  return value.replace("T", " ").slice(0, 16);
+}
+
+function formatShortTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  return value.replace("T", " ").slice(5, 16);
 }
 
 createRoot(document.getElementById("root")!).render(
