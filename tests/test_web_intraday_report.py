@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
 from stock_quant.intraday_data import intraday_history_path
 from stock_quant.intraday_report import write_intraday_report
 from stock_quant.web.api import create_app
+
+
+class FakeIntradayClient:
+    def __init__(self) -> None:
+        self.kline_calls: list[tuple[str, int, str, str]] = []
+
+    def kline(self, symbol: str, count: int = 500, period: str = "5m", session: str = "intraday") -> list[dict]:
+        self.kline_calls.append((symbol, count, period, session))
+        today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        return [
+            {"date": f"{today} 09:30:00", "open": 100, "high": 100, "low": 100, "close": 100, "volume": 100},
+            {"date": f"{today} 09:35:00", "open": 100.4, "high": 100.4, "low": 100.4, "close": 100.4, "volume": 100},
+            {"date": f"{today} 09:40:00", "open": 100.8, "high": 100.8, "low": 100.8, "close": 100.8, "volume": 100},
+            {"date": f"{today} 09:45:00", "open": 102, "high": 102, "low": 102, "close": 102, "volume": 300},
+            {"date": f"{today} 09:50:00", "open": 102.2, "high": 102.2, "low": 102.2, "close": 102.2, "volume": 100},
+        ]
 
 
 def test_intraday_report_endpoint_reads_saved_report(tmp_path: Path) -> None:
@@ -96,7 +114,8 @@ def test_intraday_backtest_endpoint_runs_and_saves_report(tmp_path: Path) -> Non
             }
         )
     )
-    app = create_app(config_path=config_path, auto_intraday=False)
+    fake_client = FakeIntradayClient()
+    app = create_app(config_path=config_path, longbridge_client=fake_client, auto_intraday=False)
     client = TestClient(app)
 
     response = client.post("/api/intraday/backtest", params={"report_dir": str(report_dir)})
@@ -104,5 +123,7 @@ def test_intraday_backtest_endpoint_runs_and_saves_report(tmp_path: Path) -> Non
     assert response.status_code == 200
     payload = response.json()
     assert payload["symbols"] == ["TEST.US"]
+    assert payload["auto_fetched_symbols"] == ["TEST.US"]
+    assert fake_client.kline_calls == [("TEST.US", 1000, "5m", "intraday")]
     assert payload["metrics"]["final_equity"] > 0
     assert (report_dir / "metrics.json").exists()
