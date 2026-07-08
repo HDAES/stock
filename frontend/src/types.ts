@@ -131,3 +131,19 @@ export type IntradayReport = {
   trades: Array<Record<string, string | number | null>>;
   signals: IntradaySignal[];
 };
+
+export type LongbridgePaperSummary = {
+  fetched_at?: string;
+  account: unknown;
+  positions: unknown;
+  orders: unknown;
+};
+
+export type LongbridgePaperOrderPayload = {
+  symbol: string;
+  side: "buy" | "sell";
+  quantity: number;
+  order_type: string;
+  price?: number | null;
+  time_in_force: string;
+};
