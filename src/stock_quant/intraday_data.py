@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+
+import pandas as pd
 
 from .cache import symbol_to_filename
 from .config import AppConfig
-from .intraday import extract_watchlist_symbols
+from .intraday import extract_watchlist_symbols, normalize_intraday_kline
 from .longbridge import LongbridgeClient
 
 
@@ -94,6 +96,30 @@ def resolve_intraday_symbols(
     return _dedupe_symbols(symbols)
 
 
+def merge_intraday_history(
+    data_dir: str | Path,
+    symbol: str,
+    period: str,
+    payload: list[dict],
+) -> Path:
+    """Merge newly fetched intraday bars into the local backtest cache.
+
+    The saved cache is normalized to US regular-session bars, sorted by time,
+    and de-duplicated by timestamp. This makes data collected during live/paper
+    intraday scans reusable by ``intraday-backtest``.
+    """
+    root = Path(data_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    path = intraday_history_path(root, symbol, period)
+
+    existing = _read_json_list(path)
+    combined = [*existing, *payload]
+    frame = normalize_intraday_kline(combined, symbol.upper())
+    frame = frame.drop_duplicates(subset=["date"], keep="last").sort_values("date")
+    path.write_text(json.dumps(_frame_to_payload(frame), indent=2))
+    return path
+
+
 def fetch_intraday_history(
     data_dir: str | Path,
     symbols: list[str],
@@ -103,7 +129,7 @@ def fetch_intraday_history(
     refresh: bool = False,
     client: IntradayDataClient | None = None,
 ) -> dict[str, Path]:
-    """Fetch intraday bars through Longbridge and cache raw JSON locally."""
+    """Fetch intraday bars through Longbridge and cache normalized JSON locally."""
     root = Path(data_dir)
     root.mkdir(parents=True, exist_ok=True)
     longbridge = client or LongbridgeClient()
@@ -115,9 +141,48 @@ def fetch_intraday_history(
             cached[symbol] = path
             continue
         payload = longbridge.kline(symbol, count=count, period=period, session=session)
-        path.write_text(json.dumps(payload, indent=2))
-        cached[symbol] = path
+        if refresh and path.exists():
+            path.unlink()
+        cached[symbol] = merge_intraday_history(root, symbol, period, payload)
     return cached
+
+
+def _read_json_list(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _frame_to_payload(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in frame.itertuples(index=False):
+        rows.append(
+            {
+                "date": pd.Timestamp(row.date).isoformat(timespec="seconds"),
+                "open": _safe_float(getattr(row, "open", None)),
+                "high": _safe_float(getattr(row, "high", None)),
+                "low": _safe_float(getattr(row, "low", None)),
+                "close": _safe_float(getattr(row, "close", None)),
+                "volume": _safe_float(getattr(row, "volume", None)),
+            }
+        )
+    return rows
+
+
+def _safe_float(value: Any) -> float | int | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number.is_integer():
+        return int(number)
+    return number
 
 
 def _dedupe_symbols(symbols: list[str]) -> list[str]:
