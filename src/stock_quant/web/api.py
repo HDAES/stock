@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 from stock_quant.analysis import (
     CacheMissError,
@@ -25,9 +27,23 @@ from stock_quant.cache import DataCache
 from stock_quant.intraday_backtest import intraday_backtest, load_intraday_history
 from stock_quant.intraday_data import ensure_intraday_history_for_today, resolve_intraday_backtest_symbols
 from stock_quant.intraday_report import read_intraday_report, write_intraday_report
-from stock_quant.longbridge import LongbridgeClient
+from stock_quant.longbridge import LongbridgeClient, LongbridgeError
+from stock_quant.longbridge_paper import LongbridgePaperTradingClient, PaperOrderRequest
 
 from .schemas import KlinePoint, RefreshResult, StockSummary, SymbolList
+
+
+class PaperOrderPayload(BaseModel):
+    symbol: str
+    side: Literal["buy", "sell", "BUY", "SELL"]
+    quantity: int = Field(gt=0)
+    order_type: str = "market"
+    price: float | None = Field(default=None, gt=0)
+    time_in_force: str = "day"
+
+
+class PaperCancelPayload(BaseModel):
+    order_id: str = Field(min_length=1)
 
 
 def create_app(
@@ -43,6 +59,9 @@ def create_app(
 
     def get_longbridge() -> LongbridgeClient | None:
         return longbridge_client
+
+    def get_paper_client() -> LongbridgePaperTradingClient:
+        return LongbridgePaperTradingClient(get_longbridge() or LongbridgeClient())
 
     intraday_task: asyncio.Task | None = None
 
@@ -217,6 +236,56 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Intraday evaluation failed: {exc}") from exc
+
+    @app.get("/api/longbridge-paper/summary")
+    def read_longbridge_paper_summary() -> dict[str, Any]:
+        try:
+            return get_paper_client().summary()
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper summary failed: {exc}") from exc
+
+    @app.get("/api/longbridge-paper/account")
+    def read_longbridge_paper_account() -> Any:
+        try:
+            return get_paper_client().account()
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper account failed: {exc}") from exc
+
+    @app.get("/api/longbridge-paper/positions")
+    def read_longbridge_paper_positions() -> Any:
+        try:
+            return get_paper_client().positions()
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper positions failed: {exc}") from exc
+
+    @app.get("/api/longbridge-paper/orders")
+    def read_longbridge_paper_orders() -> Any:
+        try:
+            return get_paper_client().orders()
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper orders failed: {exc}") from exc
+
+    @app.post("/api/longbridge-paper/order")
+    def submit_longbridge_paper_order(payload: PaperOrderPayload) -> Any:
+        try:
+            request = PaperOrderRequest(
+                symbol=payload.symbol.upper(),
+                side=payload.side.lower(),
+                quantity=payload.quantity,
+                order_type=payload.order_type.lower(),
+                price=payload.price,
+                time_in_force=payload.time_in_force.lower(),
+            )
+            return get_paper_client().submit_order(request)
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper order failed: {exc}") from exc
+
+    @app.post("/api/longbridge-paper/cancel")
+    def cancel_longbridge_paper_order(payload: PaperCancelPayload) -> Any:
+        try:
+            return get_paper_client().cancel_order(payload.order_id)
+        except LongbridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Longbridge paper cancel failed: {exc}") from exc
 
     return app
 
