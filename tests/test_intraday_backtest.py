@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_quant.config import IntradayConfig
-from stock_quant.intraday import normalize_intraday_kline
+from stock_quant.intraday import market_is_open, normalize_intraday_kline
 from stock_quant.intraday_backtest import apply_slippage, intraday_backtest
 from stock_quant.intraday_metrics import max_consecutive_losses, max_drawdown
 
@@ -66,6 +66,11 @@ def test_normalize_intraday_kline_converts_utc_to_market_time() -> None:
     )
 
     assert str(frame.iloc[0]["date"]) == "2024-01-02 09:30:00"
+
+
+def test_market_is_open_parses_nested_us_status() -> None:
+    assert market_is_open({"markets": [{"market": "US", "status": "Open"}]}, "US") is True
+    assert market_is_open({"markets": [{"market": "US", "status": "Closed"}]}, "US") is False
 
 
 def test_intraday_backtest_buys_on_next_bar_after_breakout() -> None:
