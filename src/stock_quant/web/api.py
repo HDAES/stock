@@ -172,14 +172,14 @@ def create_app(
     ) -> dict:
         config = get_config()
         data_dir = config.intraday.data_dir
-        selected_symbols = resolve_intraday_backtest_symbols(
-            config,
-            data_dir,
-            explicit_symbols=symbols or None,
-        )
         commission = config.intraday.commission_bps if commission_bps is None else commission_bps
         slippage = config.intraday.slippage_bps if slippage_bps is None else slippage_bps
         try:
+            selected_symbols = resolve_intraday_backtest_symbols(
+                config,
+                data_dir,
+                explicit_symbols=symbols or None,
+            )
             frames = load_intraday_history(data_dir, selected_symbols, config.intraday.period)
             result = intraday_backtest(
                 frames,
@@ -202,6 +202,8 @@ def create_app(
     def run_intraday_evaluate() -> dict:
         try:
             return evaluate_intraday(get_config(), get_longbridge(), print)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Intraday evaluation failed: {exc}") from exc
 
