@@ -30,5 +30,6 @@ export const api = {
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
   intradayState: () => request<IntradayState>("/api/intraday/state"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
+  intradayBacktest: () => request<IntradayReport>("/api/intraday/backtest", { method: "POST" }),
   intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" })
 };
