@@ -1,4 +1,15 @@
-import type { AppConfig, BacktestResult, IntradayReport, IntradayState, KlinePoint, RankRow, StockSummary, SymbolList } from "./types";
+import type {
+  AppConfig,
+  BacktestResult,
+  IntradayReport,
+  IntradayState,
+  KlinePoint,
+  LongbridgePaperOrderPayload,
+  LongbridgePaperSummary,
+  RankRow,
+  StockSummary,
+  SymbolList
+} from "./types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options);
@@ -41,5 +52,18 @@ export const api = {
   intradayState: () => request<IntradayState>("/api/intraday/state"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
   intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
-  intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" })
+  intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" }),
+  longbridgePaperSummary: () => request<LongbridgePaperSummary>("/api/longbridge-paper/summary"),
+  longbridgePaperOrder: (payload: LongbridgePaperOrderPayload) =>
+    request<unknown>("/api/longbridge-paper/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }),
+  longbridgePaperCancel: (orderId: string) =>
+    request<unknown>("/api/longbridge-paper/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order_id: orderId })
+    })
 };
