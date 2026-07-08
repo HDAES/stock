@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_quant.config import IntradayConfig
+from stock_quant.intraday import normalize_intraday_kline
 from stock_quant.intraday_backtest import apply_slippage, intraday_backtest
 from stock_quant.intraday_metrics import max_consecutive_losses, max_drawdown
 
@@ -47,6 +48,24 @@ def _bars(closes: list[float], volumes: list[float] | None = None) -> pd.DataFra
             }
         )
     return pd.DataFrame(rows)
+
+
+def test_normalize_intraday_kline_converts_utc_to_market_time() -> None:
+    frame = normalize_intraday_kline(
+        [
+            {
+                "date": "2024-01-02T14:30:00Z",
+                "open": 100,
+                "high": 101,
+                "low": 99,
+                "close": 100.5,
+                "volume": 1000,
+            }
+        ],
+        "TEST.US",
+    )
+
+    assert str(frame.iloc[0]["date"]) == "2024-01-02 09:30:00"
 
 
 def test_intraday_backtest_buys_on_next_bar_after_breakout() -> None:
