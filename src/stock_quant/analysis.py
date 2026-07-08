@@ -20,6 +20,7 @@ from .intraday import (
     market_is_open,
     normalize_intraday_kline,
 )
+from .intraday_data import merge_intraday_history
 from .longbridge import LongbridgeClient
 from .paper import PaperPortfolio
 from .strategy import equal_weight_targets, market_exposure, select_top_symbols
@@ -222,6 +223,16 @@ def evaluate_intraday(
                 period=config.intraday.period,
                 session=config.intraday.session,
             )
+            try:
+                cache_path = merge_intraday_history(
+                    config.intraday.data_dir,
+                    symbol,
+                    config.intraday.period,
+                    payload,
+                )
+                _log_intraday(logger, f"{symbol} cached 5m bars to {cache_path}")
+            except Exception as cache_exc:
+                _log_intraday(logger, f"{symbol} cache save skipped: {cache_exc}")
             frame = normalize_intraday_kline(payload, symbol)
             frame = _completed_intraday_frame(frame, config.intraday.period)
         except Exception as exc:
@@ -342,7 +353,7 @@ def load_strategy_inputs(
     calc_indexes = {}
     for symbol in config.universe:
         prices[symbol] = load_cached_kline(cache, symbol, config.data.history_count)
-        calc_indexes[symbol] = load_cached_calc_index(cache, symbol)
+        calc_indexes[symbol] = load_cached_calc_index(symbol)
     return prices, calc_indexes
 
 
