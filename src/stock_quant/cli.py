@@ -37,7 +37,7 @@ def main() -> None:
         help="Fetch and cache Longbridge intraday kline data",
     )
     intraday_fetch_parser.add_argument("--config", default="config/default.json")
-    intraday_fetch_parser.add_argument("--symbols", nargs="*", help="Symbols to fetch, e.g. AAPL.US MSFT.US")
+    intraday_fetch_parser.add_argument("--symbols", nargs="*", help="Override configured intraday symbols, e.g. AAPL.US MSFT.US")
     intraday_fetch_parser.add_argument("--data-dir", default=None, help="Directory to write intraday JSON files")
     intraday_fetch_parser.add_argument("--count", type=int, default=None, help="Number of intraday bars per symbol")
     intraday_fetch_parser.add_argument("--period", default=None, help="Longbridge kline period, default from config")
@@ -46,7 +46,7 @@ def main() -> None:
     intraday_fetch_parser.add_argument(
         "--no-watchlist",
         action="store_true",
-        help="Do not use Longbridge watchlist when --symbols is omitted",
+        help="Deprecated; intraday symbols now come from config.intraday.symbols by default",
     )
 
     intraday_once_parser = subparsers.add_parser("intraday-once", help="Evaluate intraday paper signals once")
@@ -60,7 +60,7 @@ def main() -> None:
         help="Run a historical intraday paper backtest from local 5m JSON files",
     )
     intraday_backtest_parser.add_argument("--config", default="config/default.json")
-    intraday_backtest_parser.add_argument("--symbols", nargs="*", help="Symbols to backtest, e.g. AAPL.US MSFT.US")
+    intraday_backtest_parser.add_argument("--symbols", nargs="*", help="Override configured intraday symbols, e.g. AAPL.US MSFT.US")
     intraday_backtest_parser.add_argument("--data-dir", default=None, help="Directory containing intraday JSON files")
     intraday_backtest_parser.add_argument("--commission-bps", type=float, default=None)
     intraday_backtest_parser.add_argument("--slippage-bps", type=float, default=None)
@@ -132,11 +132,14 @@ def run_backtest(args: argparse.Namespace) -> None:
 
 def run_intraday_fetch(args: argparse.Namespace) -> None:
     config = load_config(args.config)
-    symbols = resolve_intraday_symbols(
-        config,
-        explicit_symbols=args.symbols,
-        prefer_watchlist=not args.no_watchlist,
-    )
+    try:
+        symbols = resolve_intraday_symbols(
+            config,
+            explicit_symbols=args.symbols,
+            prefer_watchlist=False,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     data_dir = args.data_dir or config.intraday.data_dir
     count = args.count or config.intraday.history_count
     period = args.period or config.intraday.period
@@ -164,7 +167,10 @@ def run_intraday_fetch(args: argparse.Namespace) -> None:
 
 def run_intraday_once(args: argparse.Namespace) -> None:
     config = load_config(args.config)
-    result = evaluate_intraday(config, logger=print)
+    try:
+        result = evaluate_intraday(config, logger=print)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print_intraday_result(result)
 
 
@@ -172,7 +178,10 @@ def run_intraday_watch(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     try:
         while True:
-            result = evaluate_intraday(config, logger=print)
+            try:
+                result = evaluate_intraday(config, logger=print)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
             print_intraday_result(result)
             time.sleep(config.intraday.poll_seconds)
     except KeyboardInterrupt:
@@ -182,7 +191,10 @@ def run_intraday_watch(args: argparse.Namespace) -> None:
 def run_intraday_backtest(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     data_dir = args.data_dir or config.intraday.data_dir
-    symbols = resolve_intraday_backtest_symbols(config, data_dir, explicit_symbols=args.symbols)
+    try:
+        symbols = resolve_intraday_backtest_symbols(config, data_dir, explicit_symbols=args.symbols)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     commission_bps = config.intraday.commission_bps if args.commission_bps is None else args.commission_bps
     slippage_bps = config.intraday.slippage_bps if args.slippage_bps is None else args.slippage_bps
 
