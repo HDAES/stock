@@ -71,7 +71,25 @@ def _read_records_csv(path: Path) -> list[dict[str, Any]]:
     frame = pd.read_csv(path)
     for column in frame.columns:
         frame[column] = frame[column].map(_deserialize_cell)
-    return frame.to_dict(orient="records")
+    records = frame.to_dict(orient="records")
+    return [_clean_record(record) for record in records]
+
+
+def _clean_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: _clean_value(value) for key, value in record.items()}
+
+
+def _clean_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _clean_record(value)
+    if isinstance(value, list):
+        return [_clean_value(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
 
 
 def _serialize_cell(value: Any) -> Any:
