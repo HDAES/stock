@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import time
+from pathlib import Path
 
 import pandas as pd
 
@@ -12,6 +13,7 @@ from .config import load_config
 from .factors import build_factor_table
 from .intraday_backtest import intraday_backtest, load_intraday_history
 from .intraday_data import fetch_intraday_history, resolve_intraday_symbols
+from .intraday_report import write_intraday_report
 
 
 def main() -> None:
@@ -62,6 +64,16 @@ def main() -> None:
     intraday_backtest_parser.add_argument("--data-dir", default=None, help="Directory containing intraday JSON files")
     intraday_backtest_parser.add_argument("--commission-bps", type=float, default=None)
     intraday_backtest_parser.add_argument("--slippage-bps", type=float, default=None)
+    intraday_backtest_parser.add_argument(
+        "--save-report",
+        action="store_true",
+        help="Write backtest artifacts to reports/intraday or --report-dir",
+    )
+    intraday_backtest_parser.add_argument(
+        "--report-dir",
+        default="reports/intraday",
+        help="Directory for intraday report files when --save-report is used",
+    )
 
     args = parser.parse_args()
     if args.command == "fetch":
@@ -199,6 +211,19 @@ def run_intraday_backtest(args: argparse.Namespace) -> None:
         print(pd.DataFrame(result["trades"]).tail(20).to_string(index=False))
     else:
         print("Trades: (none)")
+
+    if args.save_report:
+        written = write_intraday_report(result, Path(args.report_dir))
+        print("")
+        print("Report files:")
+        rows = [
+            {
+                "artifact": key,
+                "path": str(path),
+            }
+            for key, path in written.items()
+        ]
+        print(pd.DataFrame(rows).to_string(index=False))
 
 
 def print_intraday_result(result: dict) -> None:
