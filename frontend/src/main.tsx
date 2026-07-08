@@ -27,7 +27,17 @@ import { api } from "./api";
 import { KlineChart } from "./price-chart";
 import { formatCompact, formatNumber, formatPercent, signedClass } from "./format";
 import { copy, type Copy, type Language } from "./i18n";
-import type { AppConfig, BacktestResult, IntradayState, KlinePoint, RankRow, StockSummary, SymbolList } from "./types";
+import type {
+  AppConfig,
+  BacktestResult,
+  IntradayReport,
+  IntradaySignal,
+  IntradayState,
+  KlinePoint,
+  RankRow,
+  StockSummary,
+  SymbolList
+} from "./types";
 import "./styles.css";
 
 type View = "stock" | "strategy" | "intraday";
@@ -52,6 +62,7 @@ function App() {
   const [rank, setRank] = useState<RankRow[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [intraday, setIntraday] = useState<IntradayState | null>(null);
+  const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
@@ -99,8 +110,14 @@ function App() {
     if (view !== "intraday") return;
     setLoading(true);
     setError(null);
-    api.intradayState()
-      .then(setIntraday)
+    Promise.all([
+      api.intradayState(),
+      api.intradayReport().catch(() => null)
+    ])
+      .then(([statePayload, reportPayload]) => {
+        setIntraday(statePayload);
+        setIntradayReport(reportPayload);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [view]);
@@ -189,12 +206,7 @@ function App() {
         <header className="topbar">
           <div className="symbol-picker">
             <Search size={18} />
-            <input
-              value={symbol}
-              onChange={(event) => changeSymbol(event.target.value)}
-              list="symbols"
-              aria-label="Symbol"
-            />
+            <input value={symbol} onChange={(event) => changeSymbol(event.target.value)} list="symbols" aria-label="Symbol" />
             <datalist id="symbols">
               {symbols?.cached.map((cachedSymbol) => <option key={cachedSymbol} value={cachedSymbol} />)}
             </datalist>
@@ -214,13 +226,7 @@ function App() {
         {loading && <div className="loading"><Loader2 className="spin" size={20} /> {t.loadingMarketData}</div>}
 
         {!loading && view === "stock" && summary && (
-          <StockView
-            t={t}
-            summary={summary}
-            klines={klines}
-            rankRow={selectedRank}
-            benchmark={config?.benchmark ?? "SPY.US"}
-          />
+          <StockView t={t} summary={summary} klines={klines} rankRow={selectedRank} benchmark={config?.benchmark ?? "SPY.US"} />
         )}
 
         {!loading && view === "strategy" && backtest && (
@@ -228,7 +234,7 @@ function App() {
         )}
 
         {!loading && view === "intraday" && intraday && (
-          <IntradayView t={t} state={intraday} evaluating={evaluating} onEvaluate={evaluateIntraday} />
+          <IntradayView t={t} state={intraday} report={intradayReport} evaluating={evaluating} onEvaluate={evaluateIntraday} />
         )}
       </main>
     </div>
@@ -347,10 +353,7 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
           <p className="eyebrow">{t.strategyBacktest}</p>
           <h1>{t.multiFactorRotation}</h1>
         </div>
-        <div className="risk-pill">
-          <Activity size={16} />
-          {riskStatus} {t.exposure} {formatPercent(backtest.exposure)}
-        </div>
+        <div className="risk-pill"><Activity size={16} />{riskStatus} {t.exposure} {formatPercent(backtest.exposure)}</div>
       </div>
 
       <div className="metric-grid">
@@ -367,12 +370,7 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
         </div>
         <ResponsiveContainer width="100%" height={360}>
           <AreaChart data={backtest.equity_curve}>
-            <defs>
-              <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} />
-                <stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
+            <defs><linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} /><stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} /></linearGradient></defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="date" minTickGap={32} />
             <YAxis domain={["auto", "auto"]} />
@@ -384,10 +382,7 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
 
       <div className="two-column">
         <div className="panel">
-          <div className="panel-header">
-            <h2>{t.targetWeights}</h2>
-            <span>Top {topN} {t.topSelectedSymbols}</span>
-          </div>
+          <div className="panel-header"><h2>{t.targetWeights}</h2><span>Top {topN} {t.topSelectedSymbols}</span></div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={weights} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -398,50 +393,17 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
             </BarChart>
           </ResponsiveContainer>
         </div>
-
         <div className="panel">
-          <div className="panel-header">
-            <h2>{t.selectedSymbols}</h2>
-            <span>{t.currentFactorWinners}</span>
-          </div>
-          <div className="symbol-chips">
-            {backtest.selected_symbols.map((selected) => <span key={selected}>{selected}</span>)}
-          </div>
+          <div className="panel-header"><h2>{t.selectedSymbols}</h2><span>{t.currentFactorWinners}</span></div>
+          <div className="symbol-chips">{backtest.selected_symbols.map((selected) => <span key={selected}>{selected}</span>)}</div>
         </div>
       </div>
 
       <div className="panel table-panel">
-        <div className="panel-header">
-          <h2>{t.factorRanking}</h2>
-          <span>{rank.length} {t.symbols}</span>
-        </div>
+        <div className="panel-header"><h2>{t.factorRanking}</h2><span>{rank.length} {t.symbols}</span></div>
         <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>{t.rank}</th>
-                <th>{t.symbol}</th>
-                <th>{t.score}</th>
-                <th>{t.momentum}</th>
-                <th>{t.value}</th>
-                <th>{t.quality}</th>
-                <th>{t.lowVol}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rank.map((row) => (
-                <tr key={row.symbol}>
-                  <td>{row.rank}</td>
-                  <td>{row.symbol}</td>
-                  <td>{formatNumber(row.score, 4)}</td>
-                  <td>{formatPercent(row.momentum)}</td>
-                  <td>{formatNumber(row.value, 4)}</td>
-                  <td>{formatNumber(row.quality, 4)}</td>
-                  <td>{formatNumber(row.low_volatility, 4)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <table><thead><tr><th>{t.rank}</th><th>{t.symbol}</th><th>{t.score}</th><th>{t.momentum}</th><th>{t.value}</th><th>{t.quality}</th><th>{t.lowVol}</th></tr></thead>
+            <tbody>{rank.map((row) => (<tr key={row.symbol}><td>{row.rank}</td><td>{row.symbol}</td><td>{formatNumber(row.score, 4)}</td><td>{formatPercent(row.momentum)}</td><td>{formatNumber(row.value, 4)}</td><td>{formatNumber(row.quality, 4)}</td><td>{formatNumber(row.low_volatility, 4)}</td></tr>))}</tbody></table>
         </div>
       </div>
     </section>
@@ -451,11 +413,13 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
 function IntradayView({
   t,
   state,
+  report,
   evaluating,
   onEvaluate
 }: {
   t: Copy;
   state: IntradayState;
+  report: IntradayReport | null;
   evaluating: boolean;
   onEvaluate: () => void;
 }) {
@@ -466,14 +430,8 @@ function IntradayView({
   return (
     <section className="stack">
       <div className="title-row">
-        <div>
-          <p className="eyebrow">{t.intradayTrading}</p>
-          <h1>{t.paperPortfolio}</h1>
-        </div>
-        <button className="text-button wide" onClick={onEvaluate} disabled={evaluating}>
-          {evaluating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}
-          {t.evaluateIntraday}
-        </button>
+        <div><p className="eyebrow">{t.intradayTrading}</p><h1>{t.paperPortfolio}</h1></div>
+        <button className="text-button wide" onClick={onEvaluate} disabled={evaluating}>{evaluating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{t.evaluateIntraday}</button>
       </div>
 
       <div className="metric-grid">
@@ -487,118 +445,110 @@ function IntradayView({
         <Metric label={t.realizedPnl} value={formatNumber(state.realized_pnl)} />
         <Metric label={t.unrealizedPnl} value={formatNumber(state.unrealized_pnl)} />
         <Metric label="Day" value={state.day} />
-        <Metric label="Start Equity" value={formatNumber(state.day_start_equity)} />
+        <Metric label={t.startEquity} value={formatNumber(state.day_start_equity)} />
       </div>
 
+      <IntradayReportView t={t} report={report} />
+
       <div className="panel table-panel">
-        <div className="panel-header">
-          <h2>{t.latestSignals}</h2>
-          <span>{latestSignals.length} {t.symbols}</span>
-        </div>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>{t.symbol}</th>
-                <th>{t.action}</th>
-                <th>{t.reason}</th>
-                <th>{t.price}</th>
-                <th>VWAP</th>
-                <th>EMA9</th>
-                <th>EMA21</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latestSignals.map((signal, index) => (
-                <tr key={`${signal.symbol}-${signal.timestamp}-${index}`}>
-                  <td>{signal.symbol}</td>
-                  <td><span className={`action-badge ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
-                  <td>{signal.reason}</td>
-                  <td>{formatNumber(signal.execution_price ?? signal.price)}</td>
-                  <td>{formatNumber(signal.indicators.vwap)}</td>
-                  <td>{formatNumber(signal.indicators.ema9)}</td>
-                  <td>{formatNumber(signal.indicators.ema21)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <div className="panel-header"><h2>{t.latestSignals}</h2><span>{latestSignals.length} {t.symbols}</span></div>
+        <SignalTable t={t} signals={latestSignals} />
       </div>
 
       <div className="two-column">
         <div className="panel table-panel">
-          <div className="panel-header">
-            <h2>{t.positions}</h2>
-            <span>{positions.length} {t.symbols}</span>
-          </div>
-          <div className="table-scroll">
-            <table className="compact-table">
-              <thead>
-                <tr>
-                  <th>{t.symbol}</th>
-                  <th>{t.quantity}</th>
-                  <th>{t.avgPrice}</th>
-                  <th>{t.lastPrice}</th>
-                  <th>{t.unrealizedPnl}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((position) => (
-                  <tr key={position.symbol}>
-                    <td>{position.symbol}</td>
-                    <td>{position.quantity}</td>
-                    <td>{formatNumber(position.avg_price)}</td>
-                    <td>{formatNumber(position.last_price)}</td>
-                    <td className={signedClass(position.unrealized_pnl)}>{formatNumber(position.unrealized_pnl)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="panel-header"><h2>{t.positions}</h2><span>{positions.length} {t.symbols}</span></div>
+          <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.quantity}</th><th>{t.avgPrice}</th><th>{t.lastPrice}</th><th>{t.unrealizedPnl}</th></tr></thead><tbody>{positions.map((position) => (<tr key={position.symbol}><td>{position.symbol}</td><td>{position.quantity}</td><td>{formatNumber(position.avg_price)}</td><td>{formatNumber(position.last_price)}</td><td className={signedClass(position.unrealized_pnl)}>{formatNumber(position.unrealized_pnl)}</td></tr>))}</tbody></table></div>
         </div>
-
         <div className="panel table-panel">
-          <div className="panel-header">
-            <h2>{t.recentTrades}</h2>
-            <span>{recentTrades.length}</span>
-          </div>
-          <div className="table-scroll">
-            <table className="compact-table">
-              <thead>
-                <tr>
-                  <th>{t.symbol}</th>
-                  <th>{t.action}</th>
-                  <th>{t.quantity}</th>
-                  <th>{t.price}</th>
-                  <th>{t.reason}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentTrades.map((trade, index) => (
-                  <tr key={`${trade.symbol}-${trade.timestamp}-${index}`}>
-                    <td>{trade.symbol}</td>
-                    <td>{trade.side}</td>
-                    <td>{trade.quantity}</td>
-                    <td>{formatNumber(Number(trade.price))}</td>
-                    <td>{trade.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="panel-header"><h2>{t.recentTrades}</h2><span>{recentTrades.length}</span></div>
+          <TradeTable t={t} trades={recentTrades} />
         </div>
       </div>
     </section>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function IntradayReportView({ t, report }: { t: Copy; report: IntradayReport | null }) {
+  if (!report) {
+    return <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2><span>{t.reportDirectory}</span></div><p className="muted">{t.noIntradayReport}</p></div>;
+  }
+
+  const dailyRows = report.daily_summary.slice(-10).reverse();
+  const trades = report.trades.slice(-20).reverse();
+  const signals = report.signals.slice(-25).reverse();
+
   return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <>
+      <div className="panel">
+        <div className="panel-header"><h2>{t.intradayBacktestReport}</h2><span>{report.report_dir}</span></div>
+        <div className="metric-grid compact">
+          <Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} />
+          <Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} />
+          <Metric label={t.maxDrawdown} value={formatPercent(report.metrics.max_drawdown)} />
+          <Metric label={t.winRate} value={formatPercent(report.metrics.win_rate)} />
+          <Metric label={t.profitFactor} value={formatNumber(report.metrics.profit_factor)} />
+          <Metric label={t.tradeCount} value={formatNumber(report.metrics.trade_count, 0)} />
+        </div>
+      </div>
+
+      <div className="panel chart-panel">
+        <div className="panel-header"><h2>{t.equityCurve}</h2><span>{t.intradayBacktestReport}</span></div>
+        <ResponsiveContainer width="100%" height={320}>
+          <AreaChart data={report.equity_curve}>
+            <defs><linearGradient id="intradayEquityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={0.28} /><stop offset="95%" stopColor="#0f766e" stopOpacity={0.02} /></linearGradient></defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="timestamp" minTickGap={32} tickFormatter={(value) => String(value).slice(5, 16)} />
+            <YAxis domain={["auto", "auto"]} />
+            <Tooltip formatter={(value) => formatNumber(Number(value), 2)} />
+            <Area type="monotone" dataKey="equity" stroke="#0f766e" fill="url(#intradayEquityFill)" strokeWidth={2} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="panel table-panel">
+        <div className="panel-header"><h2>{t.dailySummary}</h2><span>{dailyRows.length}</span></div>
+        <div className="table-scroll"><table className="compact-table"><thead><tr><th>Day</th><th>{t.startEquity}</th><th>{t.endEquity}</th><th>{t.dailyReturn}</th><th>{t.maxDrawdown}</th><th>{t.tradeCount}</th></tr></thead><tbody>{dailyRows.map((row, index) => (<tr key={`${recordString(row, "day")}-${index}`}><td>{recordString(row, "day")}</td><td>{formatNumber(recordNumber(row, "start_equity"))}</td><td>{formatNumber(recordNumber(row, "end_equity"))}</td><td>{formatPercent(recordNumber(row, "daily_return"))}</td><td>{formatPercent(recordNumber(row, "max_drawdown"))}</td><td>{formatNumber(recordNumber(row, "trade_count"), 0)}</td></tr>))}</tbody></table></div>
+      </div>
+
+      <div className="two-column">
+        <div className="panel table-panel"><div className="panel-header"><h2>{t.latestBacktestTrades}</h2><span>{trades.length}</span></div><TradeTable t={t} trades={trades} /></div>
+        <div className="panel table-panel"><div className="panel-header"><h2>{t.backtestSignals}</h2><span>{signals.length}</span></div><SignalTable t={t} signals={signals} /></div>
+      </div>
+    </>
   );
+}
+
+function SignalTable({ t, signals }: { t: Copy; signals: IntradaySignal[] }) {
+  return (
+    <div className="table-scroll"><table><thead><tr><th>{t.symbol}</th><th>{t.action}</th><th>{t.reason}</th><th>{t.price}</th><th>VWAP</th><th>EMA9</th><th>EMA21</th></tr></thead><tbody>{signals.map((signal, index) => (<tr key={`${signal.symbol}-${signal.timestamp ?? signal.evaluated_at}-${index}`}><td>{signal.symbol}</td><td><span className={`action-badge ${signal.action.toLowerCase()}`}>{signal.action}</span></td><td>{signal.reason}</td><td>{formatNumber(signal.execution_price ?? signal.price)}</td><td>{formatNumber(signal.indicators?.vwap)}</td><td>{formatNumber(signal.indicators?.ema9)}</td><td>{formatNumber(signal.indicators?.ema21)}</td></tr>))}</tbody></table></div>
+  );
+}
+
+function TradeTable({ t, trades }: { t: Copy; trades: Array<Record<string, string | number | null>> }) {
+  return (
+    <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => (<tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>))}</tbody></table></div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function recordNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function recordString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (value === null || value === undefined) return "-";
+  return String(value);
 }
 
 createRoot(document.getElementById("root")!).render(
