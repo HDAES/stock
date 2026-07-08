@@ -24,6 +24,7 @@ from stock_quant.analysis import (
     strategy_rank,
 )
 from stock_quant.cache import DataCache
+from stock_quant.intraday_auto_trade import load_auto_trade_state, save_auto_trade_state
 from stock_quant.intraday_backtest import intraday_backtest, load_intraday_history
 from stock_quant.intraday_data import ensure_intraday_history_for_today, resolve_intraday_backtest_symbols
 from stock_quant.intraday_report import read_intraday_report, write_intraday_report
@@ -44,6 +45,10 @@ class PaperOrderPayload(BaseModel):
 
 class PaperCancelPayload(BaseModel):
     order_id: str = Field(min_length=1)
+
+
+class AutoTradePayload(BaseModel):
+    enabled: bool
 
 
 def create_app(
@@ -170,6 +175,14 @@ def create_app(
     @app.get("/api/intraday/state")
     def read_intraday_state() -> dict:
         return intraday_state(get_config())
+
+    @app.get("/api/intraday/auto-trade")
+    def read_intraday_auto_trade() -> dict[str, Any]:
+        return load_auto_trade_state(get_config())
+
+    @app.post("/api/intraday/auto-trade")
+    def update_intraday_auto_trade(payload: AutoTradePayload) -> dict[str, Any]:
+        return save_auto_trade_state(get_config(), payload.enabled)
 
     @app.get("/api/intraday/report")
     def read_intraday_backtest_report(
