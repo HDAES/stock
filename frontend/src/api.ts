@@ -15,6 +15,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function intradayBacktestPath(symbols?: string[]): string {
+  const params = new URLSearchParams();
+  for (const symbol of symbols ?? []) {
+    const normalized = symbol.trim().toUpperCase();
+    if (normalized) params.append("symbols", normalized);
+  }
+  const query = params.toString();
+  return `/api/intraday/backtest${query ? `?${query}` : ""}`;
+}
+
 export const api = {
   config: () => request<AppConfig>("/api/config"),
   symbols: () => request<SymbolList>("/api/symbols"),
@@ -30,6 +40,6 @@ export const api = {
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
   intradayState: () => request<IntradayState>("/api/intraday/state"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
-  intradayBacktest: () => request<IntradayReport>("/api/intraday/backtest", { method: "POST" }),
+  intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
   intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" })
 };
