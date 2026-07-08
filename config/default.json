@@ -53,7 +53,11 @@
     "data_dir": "data/intraday/kline",
     "commission_bps": 1,
     "slippage_bps": 3,
-    "symbols": []
+    "symbols": [
+      "AAPL.US",
+      "NVDA.US",
+      "TSLA.US"
+    ]
   },
   "factor_weights": {
     "momentum": 0.3,
