@@ -61,53 +61,122 @@ class LongbridgePaperTradingClient:
         ])
 
     def submit_order(self, request: PaperOrderRequest) -> Any:
+        symbol = request.symbol.upper()
+        side = _cli_side(request.side)
+        order_type = _cli_order_type(request.order_type)
+        time_in_force = _cli_time_in_force(request.time_in_force)
+        quantity = str(request.quantity)
+        price = str(request.price) if request.price is not None else None
+
         candidates = [
             [
                 "order",
-                request.symbol.upper(),
+                "--symbol",
+                symbol,
                 "--side",
-                request.side.lower(),
+                side,
+                "--submitted-quantity",
+                quantity,
+                "--order-type",
+                order_type,
+                "--time-in-force",
+                time_in_force,
+            ],
+            [
+                "order",
+                "--symbol",
+                symbol,
+                "--side",
+                side.lower(),
                 "--quantity",
-                str(request.quantity),
+                quantity,
                 "--order-type",
                 request.order_type.lower(),
                 "--time-in-force",
                 request.time_in_force.lower(),
+            ],
+            [
+                "order",
+                "--security-code",
+                symbol,
+                "--side",
+                side,
+                "--submitted-quantity",
+                quantity,
+                "--order-type",
+                order_type,
+                "--time-in-force",
+                time_in_force,
+            ],
+            [
+                "order",
+                "--stock-code",
+                symbol,
+                "--side",
+                side,
+                "--submitted-quantity",
+                quantity,
+                "--order-type",
+                order_type,
+                "--time-in-force",
+                time_in_force,
+            ],
+            [
+                "order",
+                "--code",
+                symbol,
+                "--side",
+                side,
+                "--submitted-quantity",
+                quantity,
+                "--order-type",
+                order_type,
+                "--time-in-force",
+                time_in_force,
+            ],
+            [
+                "order",
+                "place",
+                "--symbol",
+                symbol,
+                "--side",
+                side,
+                "--submitted-quantity",
+                quantity,
+                "--order-type",
+                order_type,
+                "--time-in-force",
+                time_in_force,
             ],
             [
                 "order",
                 "submit",
-                request.symbol.upper(),
+                "--symbol",
+                symbol,
                 "--side",
-                request.side.lower(),
-                "--quantity",
-                str(request.quantity),
+                side,
+                "--submitted-quantity",
+                quantity,
                 "--order-type",
-                request.order_type.lower(),
+                order_type,
                 "--time-in-force",
-                request.time_in_force.lower(),
-            ],
-            [
-                "submit-order",
-                request.symbol.upper(),
-                "--side",
-                request.side.lower(),
-                "--quantity",
-                str(request.quantity),
-                "--order-type",
-                request.order_type.lower(),
-                "--time-in-force",
-                request.time_in_force.lower(),
+                time_in_force,
             ],
         ]
-        if request.price is not None:
-            candidates = [candidate + ["--price", str(request.price)] for candidate in candidates]
+        if price is not None:
+            enriched: list[list[str]] = []
+            for candidate in candidates:
+                enriched.append(candidate + ["--submitted-price", price])
+                enriched.append(candidate + ["--price", price])
+            candidates = enriched
         return self._run_first_json(candidates)
 
     def cancel_order(self, order_id: str) -> Any:
         return self._run_first_json([
+            ["order", "cancel", "--order-id", order_id],
             ["order", "cancel", order_id],
-            ["order", "cancel-order", order_id],
+            ["order", "cancel-order", "--order-id", order_id],
+            ["order", "--order-id", order_id, "--action", "cancel"],
             ["cancel-order", order_id],
             ["order-cancel", order_id],
         ])
@@ -126,3 +195,28 @@ class LongbridgePaperTradingClient:
             except LongbridgeError as exc:
                 errors.append(f"longbridge {' '.join(args)}: {exc}")
         raise LongbridgeError("; ".join(errors))
+
+
+def _cli_side(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == "buy":
+        return "Buy"
+    if normalized == "sell":
+        return "Sell"
+    return value
+
+
+def _cli_order_type(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == "limit":
+        return "LO"
+    if normalized == "market":
+        return "MO"
+    return value
+
+
+def _cli_time_in_force(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"day", "0", "1"}:
+        return "Day"
+    return value
