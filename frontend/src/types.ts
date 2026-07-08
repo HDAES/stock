@@ -84,6 +84,7 @@ export type IntradaySignal = {
   price: number | null;
   execution_price?: number | null;
   timestamp: string | null;
+  evaluated_at?: string;
   indicators: Record<string, number | null>;
   trade?: Record<string, string | number | null> | null;
 };
@@ -110,4 +111,19 @@ export type IntradayState = {
   positions: Record<string, IntradayPosition>;
   trades: Array<Record<string, string | number | null>>;
   last_signals: IntradaySignal[];
+};
+
+export type IntradayReport = {
+  report_dir: string;
+  metrics: Record<string, number>;
+  equity_curve: Array<{
+    timestamp: string;
+    cash: number;
+    equity: number;
+    daily_loss_pct?: number;
+    positions?: Record<string, IntradayPosition> | string;
+  }>;
+  daily_summary: Array<Record<string, string | number | null>>;
+  trades: Array<Record<string, string | number | null>>;
+  signals: IntradaySignal[];
 };
