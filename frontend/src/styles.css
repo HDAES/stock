@@ -370,6 +370,7 @@ table {
 .compact-table {
   min-width: 560px;
 }
+
 th,
 td {
   padding: 11px 10px;
@@ -433,6 +434,10 @@ th {
 .alert {
   color: #991b1b;
   background: #fee2e2;
+}
+
+.alert:empty {
+  display: none;
 }
 
 .loading {
