@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from stock_quant.config import AppConfig, DataConfig, IntradayConfig, StrategyConfig
 from stock_quant.intraday_data import (
     cached_intraday_symbols,
+    configured_intraday_symbols,
     fetch_intraday_history,
     intraday_history_path,
     merge_intraday_history,
@@ -47,12 +51,7 @@ class FakeClient:
         }
 
 
-class EmptyWatchlistClient(FakeClient):
-    def watchlist(self) -> dict:
-        return {"items": []}
-
-
-def _config() -> AppConfig:
+def _config(symbols: list[str] | None = None) -> AppConfig:
     return AppConfig(
         benchmark="SPY.US",
         universe=["NVDA.US", "AAPL.US"],
@@ -80,32 +79,30 @@ def _config() -> AppConfig:
             breakout_lookback=12,
             volume_lookback=12,
             volume_multiplier=1.5,
-            symbols=["TSLA.US"],
+            symbols=["TSLA.US"] if symbols is None else symbols,
         ),
         factor_weights={"momentum": 1.0},
     )
 
 
-def test_resolve_intraday_symbols_prefers_explicit_symbols() -> None:
-    symbols = resolve_intraday_symbols(
+def test_configured_intraday_symbols_prefers_explicit_symbols() -> None:
+    symbols = configured_intraday_symbols(
         _config(),
         explicit_symbols=["msft.us", "AAPL.US", "MSFT.US"],
-        client=FakeClient(),
     )
 
     assert symbols == ["AAPL.US", "MSFT.US"]
 
 
-def test_resolve_intraday_symbols_uses_watchlist_before_config() -> None:
-    symbols = resolve_intraday_symbols(_config(), client=FakeClient())
-
-    assert symbols == ["AAPL.US", "MSFT.US"]
-
-
-def test_resolve_intraday_symbols_falls_back_to_config_symbols() -> None:
-    symbols = resolve_intraday_symbols(_config(), client=EmptyWatchlistClient())
+def test_resolve_intraday_symbols_uses_config_not_watchlist() -> None:
+    symbols = resolve_intraday_symbols(_config(), client=FakeClient(), prefer_watchlist=True)
 
     assert symbols == ["TSLA.US"]
+
+
+def test_configured_intraday_symbols_requires_config_or_explicit_symbols() -> None:
+    with pytest.raises(ValueError, match="No intraday symbols configured"):
+        configured_intraday_symbols(_config(symbols=[]))
 
 
 def test_cached_intraday_symbols_reads_existing_period_files(tmp_path: Path) -> None:
@@ -116,12 +113,12 @@ def test_cached_intraday_symbols_reads_existing_period_files(tmp_path: Path) -> 
     assert cached_intraday_symbols(tmp_path, "5m") == ["AAPL.US", "MSFT.US"]
 
 
-def test_resolve_intraday_backtest_symbols_prefers_cached_files(tmp_path: Path) -> None:
+def test_resolve_intraday_backtest_symbols_uses_config_symbols_even_with_extra_cached_files(tmp_path: Path) -> None:
     intraday_history_path(tmp_path, "MSFT.US", "5m").write_text("[]")
 
-    symbols = resolve_intraday_backtest_symbols(_config(), tmp_path)
+    symbols = resolve_intraday_backtest_symbols(_config(symbols=["TSLA.US"]), tmp_path)
 
-    assert symbols == ["MSFT.US"]
+    assert symbols == ["TSLA.US"]
 
 
 def test_resolve_intraday_backtest_symbols_keeps_explicit_symbols_strict(tmp_path: Path) -> None:
