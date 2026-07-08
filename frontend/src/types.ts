@@ -87,6 +87,7 @@ export type IntradaySignal = {
   evaluated_at?: string;
   indicators: Record<string, number | null>;
   trade?: Record<string, string | number | null> | null;
+  longbridge_order?: Record<string, string | number | boolean | null | unknown> | null;
 };
 
 export type IntradayPosition = {
@@ -132,11 +133,19 @@ export type IntradayReport = {
   signals: IntradaySignal[];
 };
 
+export type IntradayAutoTradeState = {
+  enabled: boolean;
+  mode: string;
+  updated_at?: string | null;
+  error?: string;
+};
+
 export type LongbridgePaperSummary = {
   fetched_at?: string;
   account: unknown;
   positions: unknown;
   orders: unknown;
+  executions?: unknown;
 };
 
 export type LongbridgePaperOrderPayload = {
