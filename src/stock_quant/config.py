@@ -38,6 +38,7 @@ class IntradayConfig:
     volume_lookback: int
     volume_multiplier: float
     symbols: list[str]
+    history_count: int = 500
     data_dir: Path = Path("data/intraday/kline")
     commission_bps: float = 0.0
     slippage_bps: float = 0.0
@@ -97,6 +98,7 @@ def load_config(path: str | Path) -> AppConfig:
             volume_lookback=int(intraday.get("volume_lookback", 12)),
             volume_multiplier=float(intraday.get("volume_multiplier", 1.5)),
             symbols=[str(symbol).upper() for symbol in intraday.get("symbols", [])],
+            history_count=int(intraday.get("history_count", 500)),
             data_dir=_resolve_config_path(config_path, intraday.get("data_dir", "data/intraday/kline")),
             commission_bps=float(intraday.get("commission_bps", 0.0)),
             slippage_bps=float(intraday.get("slippage_bps", 0.0)),
