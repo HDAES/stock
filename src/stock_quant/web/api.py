@@ -22,6 +22,7 @@ from stock_quant.analysis import (
     strategy_rank,
 )
 from stock_quant.cache import DataCache
+from stock_quant.intraday_report import read_intraday_report
 from stock_quant.longbridge import LongbridgeClient
 
 from .schemas import KlinePoint, RefreshResult, StockSummary, SymbolList
@@ -148,6 +149,17 @@ def create_app(
     @app.get("/api/intraday/state")
     def read_intraday_state() -> dict:
         return intraday_state(get_config())
+
+    @app.get("/api/intraday/report")
+    def read_intraday_backtest_report(
+        report_dir: str = Query(default="reports/intraday"),
+    ) -> dict:
+        try:
+            return read_intraday_report(report_dir)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/intraday/evaluate")
     def run_intraday_evaluate() -> dict:
