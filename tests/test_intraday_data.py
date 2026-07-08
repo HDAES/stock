@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from stock_quant.config import AppConfig, DataConfig, IntradayConfig, StrategyConfig
@@ -7,6 +8,7 @@ from stock_quant.intraday_data import (
     cached_intraday_symbols,
     fetch_intraday_history,
     intraday_history_path,
+    merge_intraday_history,
     resolve_intraday_backtest_symbols,
     resolve_intraday_symbols,
 )
@@ -164,3 +166,58 @@ def test_fetch_intraday_history_skips_existing_cache_without_refresh(tmp_path: P
     )
 
     assert client.kline_calls == []
+
+
+def test_merge_intraday_history_dedupes_sorts_and_filters_regular_session(tmp_path: Path) -> None:
+    path = intraday_history_path(tmp_path, "AAPL.US", "5m")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2024-01-02T09:35:00",
+                    "open": 101,
+                    "high": 102,
+                    "low": 100,
+                    "close": 101.5,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2024-01-02T16:30:00",
+                    "open": 99,
+                    "high": 100,
+                    "low": 98,
+                    "close": 99.5,
+                    "volume": 100,
+                },
+            ]
+        )
+    )
+
+    merge_intraday_history(
+        tmp_path,
+        "AAPL.US",
+        "5m",
+        [
+            {
+                "date": "2024-01-02T09:30:00",
+                "open": 100,
+                "high": 101,
+                "low": 99,
+                "close": 100.5,
+                "volume": 800,
+            },
+            {
+                "date": "2024-01-02T09:35:00",
+                "open": 102,
+                "high": 103,
+                "low": 101,
+                "close": 102.5,
+                "volume": 1200,
+            },
+        ],
+    )
+
+    rows = json.loads(path.read_text())
+    assert [row["date"] for row in rows] == ["2024-01-02T09:30:00", "2024-01-02T09:35:00"]
+    assert rows[-1]["close"] == 102.5
