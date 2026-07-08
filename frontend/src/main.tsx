@@ -603,24 +603,11 @@ function recordString(record: Record<string, unknown>, key: string): string {
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value || value === "-") return "-";
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleString(undefined, {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  }
   return value.replace("T", " ").slice(0, 16);
 }
 
 function formatShortTime(value: string): string {
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  }
-  return value.replace("T", " ").slice(5, 16);
+  return value.replace("T", " ").slice(11, 16) || value;
 }
 
 createRoot(document.getElementById("root")!).render(
