@@ -14,6 +14,7 @@ from .cache import DataCache, symbol_to_filename
 from .config import AppConfig, load_config
 from .factors import annualized_volatility, build_factor_table
 from .intraday import (
+    MARKET_TIMEZONE,
     evaluate_trend_signal,
     extract_watchlist_symbols,
     market_is_open,
@@ -212,6 +213,7 @@ def evaluate_intraday(
 
     signals: list[dict[str, Any]] = []
     mark_prices: dict[str, float] = {}
+    executable_signals: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
             payload = longbridge.kline(
@@ -221,6 +223,7 @@ def evaluate_intraday(
                 session=config.intraday.session,
             )
             frame = normalize_intraday_kline(payload, symbol)
+            frame = _completed_intraday_frame(frame, config.intraday.period)
         except Exception as exc:
             signals.append(
                 {
@@ -235,6 +238,36 @@ def evaluate_intraday(
             _log_intraday(logger, f"{symbol} ERROR {exc}")
             continue
 
+        if frame.empty:
+            signal = {
+                "symbol": symbol,
+                "action": "HOLD",
+                "reason": "waiting_for_completed_5m_bar",
+                "price": quotes.get(symbol),
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "indicators": {},
+            }
+            signals.append(signal)
+            _log_intraday(logger, f"{symbol} HOLD waiting_for_completed_5m_bar")
+            continue
+
+        bar_id = _intraday_bar_id(frame)
+        last_processed = portfolio.processed_intraday_bars.get(symbol)
+        if last_processed == bar_id:
+            latest_price = _safe_float(frame.iloc[-1].get("close"))
+            signal = {
+                "symbol": symbol,
+                "action": "HOLD",
+                "reason": "bar_already_processed",
+                "price": latest_price,
+                "timestamp": bar_id,
+                "bar_id": bar_id,
+                "indicators": {},
+            }
+            signals.append(signal)
+            _log_intraday(logger, f"{symbol} HOLD bar_already_processed bar={bar_id}")
+            continue
+
         position = portfolio.positions.get(symbol)
         signal = evaluate_trend_signal(
             symbol=symbol,
@@ -245,6 +278,7 @@ def evaluate_intraday(
             daily_stop=portfolio.daily_stop,
             market_open=market_open,
         ).to_dict()
+        signal["bar_id"] = bar_id
         trade_price = quotes.get(symbol) or signal["price"]
         if trade_price is not None:
             signal["execution_price"] = trade_price
@@ -267,6 +301,9 @@ def evaluate_intraday(
                 str(signal["reason"]),
             )
             signal["trade"] = trade
+
+        portfolio.processed_intraday_bars[symbol] = bar_id
+        executable_signals.append(signal)
         price_text = _format_price(signal.get("execution_price") or signal.get("price"))
         trade = signal.get("trade")
         trade_text = ""
@@ -274,7 +311,7 @@ def evaluate_intraday(
             trade_text = f" qty={trade.get('quantity')}"
         _log_intraday(
             logger,
-            f"{symbol} {signal['action']} {signal['reason']} price={price_text}{trade_text}",
+            f"{symbol} {signal['action']} {signal['reason']} bar={bar_id} price={price_text}{trade_text}",
         )
         signals.append(signal)
 
@@ -282,7 +319,7 @@ def evaluate_intraday(
     portfolio.refresh_daily_stop(config.intraday.max_daily_loss_pct)
     portfolio.last_signals = signals
     portfolio.save(_intraday_state_path(config))
-    _append_intraday_signals(config, signals)
+    _append_intraday_signals(config, executable_signals)
     _log_intraday(
         logger,
         f"scan complete equity={portfolio.equity():.2f} cash={portfolio.cash:.2f} daily_pnl={portfolio.daily_loss_pct():.2%}",
@@ -348,6 +385,34 @@ def _safe_float(value: Any) -> float | None:
     return number
 
 
+def _completed_intraday_frame(frame: pd.DataFrame, period: str) -> pd.DataFrame:
+    if frame.empty or "date" not in frame.columns:
+        return frame.iloc[0:0].copy()
+
+    minutes = _period_minutes(period)
+    now = pd.Timestamp.now(tz=MARKET_TIMEZONE).tz_localize(None)
+    cutoff = now - pd.Timedelta(minutes=minutes)
+    today = now.date()
+    dates = pd.to_datetime(frame["date"], errors="coerce")
+    completed = frame[(dates <= cutoff) & (dates.dt.date == today)]
+    return completed.reset_index(drop=True)
+
+
+def _period_minutes(period: str) -> int:
+    normalized = str(period).strip().lower()
+    if normalized.endswith("m"):
+        try:
+            return max(1, int(normalized[:-1]))
+        except ValueError:
+            return 5
+    return 5
+
+
+def _intraday_bar_id(frame: pd.DataFrame) -> str:
+    timestamp = pd.Timestamp(frame.iloc[-1]["date"])
+    return timestamp.isoformat(timespec="seconds")
+
+
 def _intraday_dir(config: AppConfig) -> Path:
     return config.data.cache_dir.parent / "intraday"
 
@@ -398,6 +463,8 @@ def _quote_prices(client: LongbridgeClient, symbols: list[str]) -> dict[str, flo
 
 
 def _append_intraday_signals(config: AppConfig, signals: list[dict[str, Any]]) -> None:
+    if not signals:
+        return
     path = _intraday_signals_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     evaluated_at = datetime.now().isoformat(timespec="seconds")
