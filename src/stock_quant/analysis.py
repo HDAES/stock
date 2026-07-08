@@ -353,7 +353,7 @@ def load_strategy_inputs(
     calc_indexes = {}
     for symbol in config.universe:
         prices[symbol] = load_cached_kline(cache, symbol, config.data.history_count)
-        calc_indexes[symbol] = load_cached_calc_index(symbol)
+        calc_indexes[symbol] = load_cached_calc_index(cache, symbol)
     return prices, calc_indexes
 
 
