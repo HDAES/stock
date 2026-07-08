@@ -62,9 +62,11 @@ class LongbridgePaperTradingClient:
 
     def submit_order(self, request: PaperOrderRequest) -> Any:
         symbol = request.symbol.upper()
-        side = _cli_side(request.side)
+        side_command = request.side.strip().lower()
         order_type = _cli_order_type(request.order_type)
+        raw_order_type = request.order_type.strip().lower()
         time_in_force = _cli_time_in_force(request.time_in_force)
+        raw_time_in_force = request.time_in_force.strip().lower()
         quantity = str(request.quantity)
         price = str(request.price) if request.price is not None else None
 
@@ -73,8 +75,7 @@ class LongbridgePaperTradingClient:
                 "order",
                 "--symbol",
                 symbol,
-                "--side",
-                side,
+                side_command,
                 "--submitted-quantity",
                 quantity,
                 "--order-type",
@@ -86,81 +87,49 @@ class LongbridgePaperTradingClient:
                 "order",
                 "--symbol",
                 symbol,
-                "--side",
-                side.lower(),
+                side_command,
                 "--quantity",
                 quantity,
                 "--order-type",
-                request.order_type.lower(),
+                raw_order_type,
                 "--time-in-force",
-                request.time_in_force.lower(),
+                raw_time_in_force,
             ],
             [
                 "order",
-                "--security-code",
-                symbol,
-                "--side",
-                side,
-                "--submitted-quantity",
-                quantity,
-                "--order-type",
-                order_type,
-                "--time-in-force",
-                time_in_force,
-            ],
-            [
-                "order",
-                "--stock-code",
-                symbol,
-                "--side",
-                side,
-                "--submitted-quantity",
-                quantity,
-                "--order-type",
-                order_type,
-                "--time-in-force",
-                time_in_force,
-            ],
-            [
-                "order",
-                "--code",
-                symbol,
-                "--side",
-                side,
-                "--submitted-quantity",
-                quantity,
-                "--order-type",
-                order_type,
-                "--time-in-force",
-                time_in_force,
-            ],
-            [
-                "order",
-                "place",
                 "--symbol",
                 symbol,
-                "--side",
-                side,
-                "--submitted-quantity",
+                side_command,
+                "--qty",
                 quantity,
                 "--order-type",
+                raw_order_type,
+                "--time-in-force",
+                raw_time_in_force,
+            ],
+            [
+                "order",
+                "--symbol",
+                symbol,
+                side_command,
+                "--submitted-quantity",
+                quantity,
+                "--submitted-order-type",
                 order_type,
                 "--time-in-force",
                 time_in_force,
             ],
             [
                 "order",
-                "submit",
                 "--symbol",
                 symbol,
-                "--side",
-                side,
-                "--submitted-quantity",
+                side_command,
+                "--quantity",
                 quantity,
-                "--order-type",
-                order_type,
+                "--type",
+                raw_order_type,
                 "--time-in-force",
-                time_in_force,
+                raw_time_in_force,
             ],
         ]
         if price is not None:
@@ -168,6 +137,7 @@ class LongbridgePaperTradingClient:
             for candidate in candidates:
                 enriched.append(candidate + ["--submitted-price", price])
                 enriched.append(candidate + ["--price", price])
+                enriched.append(candidate + ["--limit-price", price])
             candidates = enriched
         return self._run_first_json(candidates)
 
@@ -176,7 +146,7 @@ class LongbridgePaperTradingClient:
             ["order", "cancel", "--order-id", order_id],
             ["order", "cancel", order_id],
             ["order", "cancel-order", "--order-id", order_id],
-            ["order", "--order-id", order_id, "--action", "cancel"],
+            ["order", "--order-id", order_id, "cancel"],
             ["cancel-order", order_id],
             ["order-cancel", order_id],
         ])
@@ -195,15 +165,6 @@ class LongbridgePaperTradingClient:
             except LongbridgeError as exc:
                 errors.append(f"longbridge {' '.join(args)}: {exc}")
         raise LongbridgeError("; ".join(errors))
-
-
-def _cli_side(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized == "buy":
-        return "Buy"
-    if normalized == "sell":
-        return "Sell"
-    return value
 
 
 def _cli_order_type(value: str) -> str:
