@@ -11,6 +11,7 @@ from .cache import DataCache
 from .config import load_config
 from .factors import build_factor_table
 from .intraday_backtest import intraday_backtest, load_intraday_history
+from .intraday_data import fetch_intraday_history, resolve_intraday_symbols
 
 
 def main() -> None:
@@ -28,6 +29,23 @@ def main() -> None:
 
     backtest_parser = subparsers.add_parser("backtest", help="Run a first-pass cached-data backtest")
     backtest_parser.add_argument("--config", default="config/default.json")
+
+    intraday_fetch_parser = subparsers.add_parser(
+        "intraday-fetch",
+        help="Fetch and cache Longbridge intraday kline data",
+    )
+    intraday_fetch_parser.add_argument("--config", default="config/default.json")
+    intraday_fetch_parser.add_argument("--symbols", nargs="*", help="Symbols to fetch, e.g. AAPL.US MSFT.US")
+    intraday_fetch_parser.add_argument("--data-dir", default=None, help="Directory to write intraday JSON files")
+    intraday_fetch_parser.add_argument("--count", type=int, default=None, help="Number of intraday bars per symbol")
+    intraday_fetch_parser.add_argument("--period", default=None, help="Longbridge kline period, default from config")
+    intraday_fetch_parser.add_argument("--session", default=None, help="Longbridge kline session, default from config")
+    intraday_fetch_parser.add_argument("--refresh", action="store_true", help="Refetch even when cache files exist")
+    intraday_fetch_parser.add_argument(
+        "--no-watchlist",
+        action="store_true",
+        help="Do not use Longbridge watchlist when --symbols is omitted",
+    )
 
     intraday_once_parser = subparsers.add_parser("intraday-once", help="Evaluate intraday paper signals once")
     intraday_once_parser.add_argument("--config", default="config/default.json")
@@ -52,6 +70,8 @@ def main() -> None:
         run_rank(args)
     elif args.command == "backtest":
         run_backtest(args)
+    elif args.command == "intraday-fetch":
+        run_intraday_fetch(args)
     elif args.command == "intraday-once":
         run_intraday_once(args)
     elif args.command == "intraday-watch":
@@ -96,6 +116,38 @@ def run_backtest(args: argparse.Namespace) -> None:
     print("")
     print("Backtest metrics from cached window:")
     print(pd.Series(result["metrics"]).map(lambda value: f"{value:.4f}").to_string())
+
+
+def run_intraday_fetch(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    symbols = resolve_intraday_symbols(
+        config,
+        explicit_symbols=args.symbols,
+        prefer_watchlist=not args.no_watchlist,
+    )
+    data_dir = args.data_dir or config.intraday.data_dir
+    count = args.count or config.intraday.history_count
+    period = args.period or config.intraday.period
+    session = args.session or config.intraday.session
+
+    cached = fetch_intraday_history(
+        data_dir=data_dir,
+        symbols=symbols,
+        count=count,
+        period=period,
+        session=session,
+        refresh=args.refresh,
+    )
+
+    print("Intraday cached files:")
+    rows = [
+        {
+            "symbol": symbol,
+            "path": str(path),
+        }
+        for symbol, path in cached.items()
+    ]
+    print(pd.DataFrame(rows).to_string(index=False))
 
 
 def run_intraday_once(args: argparse.Namespace) -> None:
