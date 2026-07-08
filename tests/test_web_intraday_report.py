@@ -90,7 +90,7 @@ def test_intraday_backtest_endpoint_runs_and_saves_report(tmp_path: Path) -> Non
                     "data_dir": str(data_dir),
                     "commission_bps": 0,
                     "slippage_bps": 0,
-                    "symbols": [],
+                    "symbols": ["TEST.US"],
                 },
                 "factor_weights": {"momentum": 1.0},
             }
