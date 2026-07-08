@@ -8,7 +8,7 @@ import pandas as pd
 
 from .cache import symbol_to_filename
 from .config import AppConfig
-from .intraday import normalize_intraday_kline
+from .intraday import MARKET_TIMEZONE, normalize_intraday_kline
 from .longbridge import LongbridgeClient
 
 
@@ -88,6 +88,47 @@ def resolve_intraday_symbols(
     """
     _ = client, prefer_watchlist
     return configured_intraday_symbols(config, explicit_symbols)
+
+
+def intraday_cache_has_today(data_dir: str | Path, symbol: str, period: str) -> bool:
+    """Return whether a cached intraday file contains today's US-market bars."""
+    path = intraday_history_path(data_dir, symbol, period)
+    payload = _read_json_list(path)
+    if not payload:
+        return False
+    try:
+        frame = normalize_intraday_kline(payload, symbol.upper())
+    except Exception:
+        return False
+    if frame.empty:
+        return False
+    today = pd.Timestamp.now(tz=MARKET_TIMEZONE).date()
+    dates = pd.to_datetime(frame["date"], errors="coerce")
+    return bool((dates.dt.date == today).any())
+
+
+def ensure_intraday_history_for_today(
+    data_dir: str | Path,
+    symbols: list[str],
+    period: str,
+    session: str,
+    count: int = 1000,
+    client: IntradayDataClient | None = None,
+) -> list[str]:
+    """Fetch and merge recent bars for symbols missing today's intraday cache."""
+    missing_today = [
+        symbol for symbol in _dedupe_symbols(symbols) if not intraday_cache_has_today(data_dir, symbol, period)
+    ]
+    if not missing_today:
+        return []
+
+    longbridge = client or LongbridgeClient()
+    fetched: list[str] = []
+    for symbol in missing_today:
+        payload = longbridge.kline(symbol, count=count, period=period, session=session)
+        merge_intraday_history(data_dir, symbol, period, payload)
+        fetched.append(symbol)
+    return fetched
 
 
 def merge_intraday_history(
