@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   BacktestResult,
+  IntradayAutoTradeState,
   IntradayReport,
   IntradayState,
   KlinePoint,
@@ -53,6 +54,13 @@ export const api = {
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
   intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
   intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" }),
+  intradayAutoTrade: () => request<IntradayAutoTradeState>("/api/intraday/auto-trade"),
+  updateIntradayAutoTrade: (enabled: boolean) =>
+    request<IntradayAutoTradeState>("/api/intraday/auto-trade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    }),
   longbridgePaperSummary: () => request<LongbridgePaperSummary>("/api/longbridge-paper/summary"),
   longbridgePaperOrder: (payload: LongbridgePaperOrderPayload) =>
     request<unknown>("/api/longbridge-paper/order", {
