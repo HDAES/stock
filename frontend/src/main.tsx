@@ -34,14 +34,25 @@ import type {
   IntradaySignal,
   IntradayState,
   KlinePoint,
+  LongbridgePaperOrderPayload,
+  LongbridgePaperSummary,
   RankRow,
   StockSummary,
   SymbolList
 } from "./types";
 import "./styles.css";
 
-type View = "stock" | "strategy" | "intraday" | "intradayBacktest";
+type View = "stock" | "strategy" | "intraday" | "intradayBacktest" | "longbridgePaper";
 const REPORT_PAGE_SIZE = 20;
+
+const DEFAULT_PAPER_ORDER: LongbridgePaperOrderPayload = {
+  symbol: "TSLA.US",
+  side: "buy",
+  quantity: 1,
+  order_type: "market",
+  price: null,
+  time_in_force: "day"
+};
 
 function App() {
   const [view, setView] = useState<View>(
@@ -49,9 +60,11 @@ function App() {
       ? "strategy"
       : window.location.pathname.startsWith("/intraday-backtest")
         ? "intradayBacktest"
-        : window.location.pathname.startsWith("/intraday")
-          ? "intraday"
-          : "stock"
+        : window.location.pathname.startsWith("/longbridge-paper")
+          ? "longbridgePaper"
+          : window.location.pathname.startsWith("/intraday")
+            ? "intraday"
+            : "stock"
   );
   const [language, setLanguage] = useState<Language>(() => {
     const saved = window.localStorage.getItem("stock_quant_language");
@@ -67,10 +80,16 @@ function App() {
   const [intraday, setIntraday] = useState<IntradayState | null>(null);
   const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
   const [selectedBacktestSymbols, setSelectedBacktestSymbols] = useState<string[]>([]);
+  const [paperSummary, setPaperSummary] = useState<LongbridgePaperSummary | null>(null);
+  const [paperOrder, setPaperOrder] = useState<LongbridgePaperOrderPayload>(DEFAULT_PAPER_ORDER);
+  const [paperCancelOrderId, setPaperCancelOrderId] = useState("");
+  const [paperOperationResult, setPaperOperationResult] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [runningBacktest, setRunningBacktest] = useState(false);
+  const [loadingPaper, setLoadingPaper] = useState(false);
+  const [submittingPaper, setSubmittingPaper] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,6 +101,7 @@ function App() {
         setSelectedBacktestSymbols(configuredIntradaySymbols);
         const preferred = symbolPayload.cached.includes("TSLA.US") ? "TSLA.US" : symbolPayload.cached[0] ?? configPayload.universe[0];
         setSymbol(preferred);
+        setPaperOrder((current) => ({ ...current, symbol: configuredIntradaySymbols[0] ?? preferred ?? current.symbol }));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -133,6 +153,11 @@ function App() {
       .finally(() => setLoading(false));
   }, [view]);
 
+  useEffect(() => {
+    if (view !== "longbridgePaper") return;
+    loadPaperSummary();
+  }, [view]);
+
   const selectedRank = useMemo(() => rank.find((row) => row.symbol === symbol), [rank, symbol]);
   const intradayConfigSymbols = useMemo(() => getIntradayConfigSymbols(config), [config]);
   const t = copy[language];
@@ -151,7 +176,9 @@ function App() {
         ? "/intraday"
         : nextView === "intradayBacktest"
           ? "/intraday-backtest"
-          : `/stocks/${symbol}`;
+          : nextView === "longbridgePaper"
+            ? "/longbridge-paper"
+            : `/stocks/${symbol}`;
     window.history.replaceState(null, "", nextPath);
   }
 
@@ -207,6 +234,58 @@ function App() {
     }
   }
 
+  async function loadPaperSummary() {
+    setLoadingPaper(true);
+    setError(null);
+    try {
+      const payload = await api.longbridgePaperSummary();
+      setPaperSummary(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Longbridge paper summary failed");
+    } finally {
+      setLoadingPaper(false);
+      setLoading(false);
+    }
+  }
+
+  async function submitPaperOrder() {
+    setSubmittingPaper(true);
+    setError(null);
+    setPaperOperationResult(null);
+    try {
+      const payload = await api.longbridgePaperOrder({
+        ...paperOrder,
+        symbol: paperOrder.symbol.trim().toUpperCase(),
+        quantity: Number(paperOrder.quantity),
+        price: paperOrder.order_type === "market" ? null : paperOrder.price
+      });
+      setPaperOperationResult(payload);
+      await loadPaperSummary();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Longbridge paper order failed");
+    } finally {
+      setSubmittingPaper(false);
+    }
+  }
+
+  async function cancelPaperOrder() {
+    const orderId = paperCancelOrderId.trim();
+    if (!orderId) return;
+    setSubmittingPaper(true);
+    setError(null);
+    setPaperOperationResult(null);
+    try {
+      const payload = await api.longbridgePaperCancel(orderId);
+      setPaperOperationResult(payload);
+      setPaperCancelOrderId("");
+      await loadPaperSummary();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Longbridge paper cancel failed");
+    } finally {
+      setSubmittingPaper(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -215,6 +294,7 @@ function App() {
         <button className={view === "strategy" ? "nav active" : "nav"} onClick={() => navigate("strategy")}><BarChart3 size={18} />{t.strategyBacktest}</button>
         <button className={view === "intraday" ? "nav active" : "nav"} onClick={() => navigate("intraday")}><Zap size={18} />{t.intradayTrading}</button>
         <button className={view === "intradayBacktest" ? "nav active" : "nav"} onClick={() => navigate("intradayBacktest")}><BarChart3 size={18} />{t.intradayBacktest}</button>
+        <button className={view === "longbridgePaper" ? "nav active" : "nav"} onClick={() => navigate("longbridgePaper")}><Activity size={18} />{t.longbridgePaper}</button>
         <div className="cache-note"><Database size={16} /><span>{symbols?.cached.length ?? 0} {t.cachedSymbols}</span></div>
       </aside>
 
@@ -245,6 +325,22 @@ function App() {
             onSelectedSymbolsChange={setSelectedBacktestSymbols}
             runningBacktest={runningBacktest}
             onRunBacktest={runIntradayBacktest}
+          />
+        )}
+        {!loading && view === "longbridgePaper" && (
+          <LongbridgePaperView
+            t={t}
+            summary={paperSummary}
+            order={paperOrder}
+            cancelOrderId={paperCancelOrderId}
+            operationResult={paperOperationResult}
+            loading={loadingPaper}
+            submitting={submittingPaper}
+            onRefresh={loadPaperSummary}
+            onOrderChange={setPaperOrder}
+            onSubmitOrder={submitPaperOrder}
+            onCancelOrderIdChange={setPaperCancelOrderId}
+            onCancelOrder={cancelPaperOrder}
           />
         )}
       </main>
@@ -343,6 +439,40 @@ function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Co
   );
 }
 
+function LongbridgePaperView({ t, summary, order, cancelOrderId, operationResult, loading, submitting, onRefresh, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; onRefresh: () => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
+  return (
+    <section className="stack">
+      <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div>
+      <div className="alert">{t.paperTradingRiskNote}</div>
+      <div className="two-column">
+        <div className="panel">
+          <div className="panel-header"><h2>{t.orderForm}</h2><span>{t.submitPaperOrder}</span></div>
+          <div className="metric-list">
+            <label>{t.symbol}<input value={order.symbol} onChange={(event) => onOrderChange({ ...order, symbol: event.target.value.toUpperCase() })} /></label>
+            <label>{t.side}<select value={order.side} onChange={(event) => onOrderChange({ ...order, side: event.target.value as "buy" | "sell" })}><option value="buy">{t.buy}</option><option value="sell">{t.sell}</option></select></label>
+            <label>{t.quantity}<input type="number" min="1" value={order.quantity} onChange={(event) => onOrderChange({ ...order, quantity: Number(event.target.value) })} /></label>
+            <label>{t.orderType}<select value={order.order_type} onChange={(event) => onOrderChange({ ...order, order_type: event.target.value })}><option value="market">Market</option><option value="limit">Limit</option></select></label>
+            <label>{t.price}<input type="number" min="0" step="0.01" disabled={order.order_type === "market"} value={order.price ?? ""} onChange={(event) => onOrderChange({ ...order, price: event.target.value ? Number(event.target.value) : null })} /></label>
+            <label>{t.timeInForce}<input value={order.time_in_force} onChange={(event) => onOrderChange({ ...order, time_in_force: event.target.value })} /></label>
+          </div>
+          <button className="text-button wide" onClick={onSubmitOrder} disabled={submitting}>{submitting ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{t.submitPaperOrder}</button>
+        </div>
+        <div className="panel">
+          <div className="panel-header"><h2>{t.cancelPaperOrder}</h2><span>{t.orderId}</span></div>
+          <div className="symbol-picker"><input value={cancelOrderId} onChange={(event) => onCancelOrderIdChange(event.target.value)} placeholder={t.orderId} /></div>
+          <button className="text-button wide" onClick={onCancelOrder} disabled={submitting || !cancelOrderId.trim()}>{submitting ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.cancelPaperOrder}</button>
+          {operationResult !== null && <RawPayloadView title={t.orderResult} payload={operationResult} />}
+        </div>
+      </div>
+      <div className="two-column">
+        <RawPayloadView title={t.paperAccount} payload={summary?.account ?? null} />
+        <RawPayloadView title={t.paperPositions} payload={summary?.positions ?? null} />
+      </div>
+      <RawPayloadView title={t.paperOrders} payload={summary?.orders ?? null} />
+    </section>
+  );
+}
+
 function IntradayReportView({ t, report, selectedSymbols, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; selectedSymbols: string[]; runningBacktest: boolean; onRunBacktest: () => void }) {
   const [dailyPage, setDailyPage] = useState(1);
   const [tradePage, setTradePage] = useState(1);
@@ -382,6 +512,10 @@ function SignalTable({ t, signals }: { t: Copy; signals: IntradaySignal[] }) {
 
 function TradeTable({ t, trades }: { t: Copy; trades: Array<Record<string, string | number | null>> }) {
   return <div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.time}</th><th>{t.symbol}</th><th>{t.action}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.reason}</th></tr></thead><tbody>{trades.map((trade, index) => <tr key={`${recordString(trade, "symbol")}-${recordString(trade, "timestamp")}-${index}`}><td>{formatDateTime(recordString(trade, "timestamp"))}</td><td>{recordString(trade, "symbol")}</td><td>{recordString(trade, "side")}</td><td>{formatNumber(recordNumber(trade, "quantity"), 0)}</td><td>{formatNumber(recordNumber(trade, "price"))}</td><td>{recordString(trade, "reason")}</td></tr>)}</tbody></table></div>;
+}
+
+function RawPayloadView({ title, payload }: { title: string; payload: unknown }) {
+  return <div className="panel"><div className="panel-header"><h2>{title}</h2></div><pre>{payload === null || payload === undefined ? "-" : JSON.stringify(payload, null, 2)}</pre></div>;
 }
 
 function Pagination({ page, total, onChange }: { page: number; total: number; onChange: (page: number) => void }) {
