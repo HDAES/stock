@@ -40,16 +40,18 @@ import type {
 } from "./types";
 import "./styles.css";
 
-type View = "stock" | "strategy" | "intraday";
+type View = "stock" | "strategy" | "intraday" | "intradayBacktest";
 const REPORT_PAGE_SIZE = 20;
 
 function App() {
   const [view, setView] = useState<View>(
     window.location.pathname.startsWith("/strategy")
       ? "strategy"
-      : window.location.pathname.startsWith("/intraday")
-        ? "intraday"
-        : "stock"
+      : window.location.pathname.startsWith("/intraday-backtest")
+        ? "intradayBacktest"
+        : window.location.pathname.startsWith("/intraday")
+          ? "intraday"
+          : "stock"
   );
   const [language, setLanguage] = useState<Language>(() => {
     const saved = window.localStorage.getItem("stock_quant_language");
@@ -112,12 +114,19 @@ function App() {
     if (view !== "intraday") return;
     setLoading(true);
     setError(null);
-    Promise.all([api.intradayState(), api.intradayReport().catch(() => null)])
-      .then(([statePayload, reportPayload]) => {
-        setIntraday(statePayload);
-        setIntradayReport(reportPayload);
-      })
+    api.intradayState()
+      .then((statePayload) => setIntraday(statePayload))
       .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== "intradayBacktest") return;
+    setLoading(true);
+    setError(null);
+    api.intradayReport()
+      .then((reportPayload) => setIntradayReport(reportPayload))
+      .catch(() => setIntradayReport(null))
       .finally(() => setLoading(false));
   }, [view]);
 
@@ -132,7 +141,13 @@ function App() {
 
   function navigate(nextView: View) {
     setView(nextView);
-    const nextPath = nextView === "strategy" ? "/strategy" : nextView === "intraday" ? "/intraday" : `/stocks/${symbol}`;
+    const nextPath = nextView === "strategy"
+      ? "/strategy"
+      : nextView === "intraday"
+        ? "/intraday"
+        : nextView === "intradayBacktest"
+          ? "/intraday-backtest"
+          : `/stocks/${symbol}`;
     window.history.replaceState(null, "", nextPath);
   }
 
@@ -191,6 +206,7 @@ function App() {
         <button className={view === "stock" ? "nav active" : "nav"} onClick={() => navigate("stock")}><LineChart size={18} />{t.stockAnalysis}</button>
         <button className={view === "strategy" ? "nav active" : "nav"} onClick={() => navigate("strategy")}><BarChart3 size={18} />{t.strategyBacktest}</button>
         <button className={view === "intraday" ? "nav active" : "nav"} onClick={() => navigate("intraday")}><Zap size={18} />{t.intradayTrading}</button>
+        <button className={view === "intradayBacktest" ? "nav active" : "nav"} onClick={() => navigate("intradayBacktest")}><BarChart3 size={18} />{t.intradayBacktest}</button>
         <div className="cache-note"><Database size={16} /><span>{symbols?.cached.length ?? 0} {t.cachedSymbols}</span></div>
       </aside>
 
@@ -211,9 +227,8 @@ function App() {
         {loading && <div className="loading"><Loader2 className="spin" size={20} /> {t.loadingMarketData}</div>}
         {!loading && view === "stock" && summary && <StockView t={t} summary={summary} klines={klines} rankRow={selectedRank} benchmark={config?.benchmark ?? "SPY.US"} />}
         {!loading && view === "strategy" && backtest && <StrategyView t={t} rank={rank} backtest={backtest} topN={Number(config?.strategy.top_n ?? 10)} />}
-        {!loading && view === "intraday" && intraday && (
-          <IntradayView t={t} state={intraday} report={intradayReport} evaluating={evaluating} runningBacktest={runningBacktest} onEvaluate={evaluateIntraday} onRunBacktest={runIntradayBacktest} />
-        )}
+        {!loading && view === "intraday" && intraday && <IntradayView t={t} state={intraday} evaluating={evaluating} onEvaluate={evaluateIntraday} />}
+        {!loading && view === "intradayBacktest" && <IntradayBacktestView t={t} report={intradayReport} runningBacktest={runningBacktest} onRunBacktest={runIntradayBacktest} />}
       </main>
     </div>
   );
@@ -256,7 +271,7 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
   );
 }
 
-function IntradayView({ t, state, report, evaluating, runningBacktest, onEvaluate, onRunBacktest }: { t: Copy; state: IntradayState; report: IntradayReport | null; evaluating: boolean; runningBacktest: boolean; onEvaluate: () => void; onRunBacktest: () => void }) {
+function IntradayView({ t, state, evaluating, onEvaluate }: { t: Copy; state: IntradayState; evaluating: boolean; onEvaluate: () => void }) {
   const positions = Object.values(state.positions);
   const latestSignals = state.last_signals.slice(-25).reverse();
   const recentTrades = state.trades.slice(-20).reverse();
@@ -266,9 +281,17 @@ function IntradayView({ t, state, report, evaluating, runningBacktest, onEvaluat
       <div className="title-row"><div><p className="eyebrow">{t.intradayTrading}</p><h1>{t.paperPortfolio}</h1></div><button className="text-button wide" onClick={onEvaluate} disabled={evaluating}>{evaluating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{t.evaluateIntraday}</button></div>
       <div className="metric-grid"><Metric label={t.equity} value={formatNumber(state.equity)} /><Metric label={t.cash} value={formatNumber(state.cash)} /><Metric label={t.dailyLoss} value={formatPercent(state.daily_loss_pct)} /><Metric label={t.dailyStop} value={state.daily_stop ? t.active : t.normal} /></div>
       <div className="metric-grid compact"><Metric label={t.realizedPnl} value={formatNumber(state.realized_pnl)} /><Metric label={t.unrealizedPnl} value={formatNumber(state.unrealized_pnl)} /><Metric label="Day" value={state.day} /><Metric label={t.startEquity} value={formatNumber(state.day_start_equity)} /></div>
-      <IntradayReportView t={t} report={report} runningBacktest={runningBacktest} onRunBacktest={onRunBacktest} />
       <div className="panel table-panel"><div className="panel-header"><h2>{t.latestSignals}</h2><span>{latestSignals.length} {t.symbols}</span></div><SignalTable t={t} signals={latestSignals} /></div>
       <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.positions}</h2><span>{positions.length} {t.symbols}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.quantity}</th><th>{t.avgPrice}</th><th>{t.lastPrice}</th><th>{t.unrealizedPnl}</th></tr></thead><tbody>{positions.map((position) => <tr key={position.symbol}><td>{position.symbol}</td><td>{position.quantity}</td><td>{formatNumber(position.avg_price)}</td><td>{formatNumber(position.last_price)}</td><td className={signedClass(position.unrealized_pnl)}>{formatNumber(position.unrealized_pnl)}</td></tr>)}</tbody></table></div></div><div className="panel table-panel"><div className="panel-header"><h2>{t.recentTrades}</h2><span>{recentTrades.length}</span></div><TradeTable t={t} trades={recentTrades} /></div></div>
+    </section>
+  );
+}
+
+function IntradayBacktestView({ t, report, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; runningBacktest: boolean; onRunBacktest: () => void }) {
+  return (
+    <section className="stack">
+      <div className="title-row"><div><p className="eyebrow">{t.intradayBacktest}</p><h1>{t.intradayBacktestReport}</h1></div></div>
+      <IntradayReportView t={t} report={report} runningBacktest={runningBacktest} onRunBacktest={onRunBacktest} />
     </section>
   );
 }
