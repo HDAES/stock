@@ -49,6 +49,7 @@
     "breakout_lookback": 12,
     "volume_lookback": 12,
     "volume_multiplier": 1.5,
+    "history_count": 500,
     "data_dir": "data/intraday/kline",
     "commission_bps": 1,
     "slippage_bps": 3,
