@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from typing import Any
 
 
 class LongbridgeError(RuntimeError):
@@ -19,26 +20,30 @@ class LongbridgeClient:
         period: str = "day",
         session: str = "intraday",
     ) -> list[dict]:
-        return self._run(
+        return self.run_json(
             ["kline", symbol, "--period", period, "--count", str(count), "--session", session]
         )
 
     def quote(self, *symbols: str) -> list[dict]:
-        return self._run(["quote", *symbols])
+        return self.run_json(["quote", *symbols])
 
     def calc_index(self, symbol: str) -> list[dict]:
-        return self._run(["calc-index", symbol])
+        return self.run_json(["calc-index", symbol])
 
     def constituent(self, index_symbol: str) -> dict | list[dict]:
-        return self._run(["constituent", index_symbol])
+        return self.run_json(["constituent", index_symbol])
 
     def watchlist(self) -> dict | list[dict]:
-        return self._run(["watchlist"])
+        return self.run_json(["watchlist"])
 
     def market_status(self) -> dict | list[dict]:
-        return self._run(["market-status"])
+        return self.run_json(["market-status"])
 
-    def _run(self, args: list[str]) -> dict | list[dict]:
+    def run_json(self, args: list[str]) -> Any:
+        """Run a Longbridge CLI command and parse its JSON output."""
+        return self._run(args)
+
+    def _run(self, args: list[str]) -> Any:
         command = [self.binary, *args, "--format", "json"]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
