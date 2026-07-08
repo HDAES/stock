@@ -16,11 +16,10 @@ from .factors import annualized_volatility, build_factor_table
 from .intraday import (
     MARKET_TIMEZONE,
     evaluate_trend_signal,
-    extract_watchlist_symbols,
     market_is_open,
     normalize_intraday_kline,
 )
-from .intraday_data import merge_intraday_history
+from .intraday_data import configured_intraday_symbols, merge_intraday_history
 from .longbridge import LongbridgeClient
 from .paper import PaperPortfolio
 from .strategy import equal_weight_targets, market_exposure, select_top_symbols
@@ -202,10 +201,10 @@ def evaluate_intraday(
         portfolio.save(_intraday_state_path(config))
         return portfolio.to_dict()
 
-    symbols = _intraday_symbols(config, longbridge)
+    symbols = _intraday_symbols(config)
     market_open = _market_open(longbridge)
     status = "open" if market_open else "closed"
-    _log_intraday(logger, f"market {status}, scanning {len(symbols)} watchlist symbols")
+    _log_intraday(logger, f"market {status}, scanning {len(symbols)} configured intraday symbols")
     quotes = _quote_prices(longbridge, symbols)
     portfolio.mark(quotes)
     portfolio.refresh_daily_stop(config.intraday.max_daily_loss_pct)
@@ -436,14 +435,8 @@ def _intraday_signals_path(config: AppConfig) -> Path:
     return _intraday_dir(config) / "signals.jsonl"
 
 
-def _intraday_symbols(config: AppConfig, client: LongbridgeClient) -> list[str]:
-    try:
-        symbols = extract_watchlist_symbols(client.watchlist())
-    except Exception:
-        symbols = []
-    if not symbols:
-        symbols = list(config.intraday.symbols)
-    return sorted(dict.fromkeys(symbol.upper() for symbol in symbols))
+def _intraday_symbols(config: AppConfig) -> list[str]:
+    return configured_intraday_symbols(config)
 
 
 def _market_open(client: LongbridgeClient) -> bool:
