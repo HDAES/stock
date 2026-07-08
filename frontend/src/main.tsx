@@ -66,6 +66,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
+  const [runningBacktest, setRunningBacktest] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -174,6 +175,19 @@ function App() {
     }
   }
 
+  async function runIntradayBacktest() {
+    setRunningBacktest(true);
+    setError(null);
+    try {
+      const payload = await api.intradayBacktest();
+      setIntradayReport(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Intraday backtest failed");
+    } finally {
+      setRunningBacktest(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -234,7 +248,15 @@ function App() {
         )}
 
         {!loading && view === "intraday" && intraday && (
-          <IntradayView t={t} state={intraday} report={intradayReport} evaluating={evaluating} onEvaluate={evaluateIntraday} />
+          <IntradayView
+            t={t}
+            state={intraday}
+            report={intradayReport}
+            evaluating={evaluating}
+            runningBacktest={runningBacktest}
+            onEvaluate={evaluateIntraday}
+            onRunBacktest={runIntradayBacktest}
+          />
         )}
       </main>
     </div>
@@ -415,13 +437,17 @@ function IntradayView({
   state,
   report,
   evaluating,
-  onEvaluate
+  runningBacktest,
+  onEvaluate,
+  onRunBacktest
 }: {
   t: Copy;
   state: IntradayState;
   report: IntradayReport | null;
   evaluating: boolean;
+  runningBacktest: boolean;
   onEvaluate: () => void;
+  onRunBacktest: () => void;
 }) {
   const positions = Object.values(state.positions);
   const latestSignals = state.last_signals.slice(-25).reverse();
@@ -448,7 +474,7 @@ function IntradayView({
         <Metric label={t.startEquity} value={formatNumber(state.day_start_equity)} />
       </div>
 
-      <IntradayReportView t={t} report={report} />
+      <IntradayReportView t={t} report={report} runningBacktest={runningBacktest} onRunBacktest={onRunBacktest} />
 
       <div className="panel table-panel">
         <div className="panel-header"><h2>{t.latestSignals}</h2><span>{latestSignals.length} {t.symbols}</span></div>
@@ -469,9 +495,31 @@ function IntradayView({
   );
 }
 
-function IntradayReportView({ t, report }: { t: Copy; report: IntradayReport | null }) {
+function IntradayReportView({
+  t,
+  report,
+  runningBacktest,
+  onRunBacktest
+}: {
+  t: Copy;
+  report: IntradayReport | null;
+  runningBacktest: boolean;
+  onRunBacktest: () => void;
+}) {
+  const runButton = (
+    <button className="text-button wide" onClick={onRunBacktest} disabled={runningBacktest}>
+      {runningBacktest ? <Loader2 className="spin" size={17} /> : <BarChart3 size={17} />}
+      {runningBacktest ? t.runningIntradayBacktest : t.runIntradayBacktest}
+    </button>
+  );
+
   if (!report) {
-    return <div className="panel"><div className="panel-header"><h2>{t.intradayBacktestReport}</h2><span>{t.reportDirectory}</span></div><p className="muted">{t.noIntradayReport}</p></div>;
+    return (
+      <div className="panel">
+        <div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div>
+        <p className="muted">{t.noIntradayReport}</p>
+      </div>
+    );
   }
 
   const dailyRows = report.daily_summary.slice(-10).reverse();
@@ -481,7 +529,8 @@ function IntradayReportView({ t, report }: { t: Copy; report: IntradayReport | n
   return (
     <>
       <div className="panel">
-        <div className="panel-header"><h2>{t.intradayBacktestReport}</h2><span>{report.report_dir}</span></div>
+        <div className="panel-header"><h2>{t.intradayBacktestReport}</h2>{runButton}</div>
+        <p className="muted">{t.reportDirectory}: {report.report_dir}</p>
         <div className="metric-grid compact">
           <Metric label={t.finalEquity} value={formatNumber(report.metrics.final_equity)} />
           <Metric label={t.totalReturn} value={formatPercent(report.metrics.total_return)} />
