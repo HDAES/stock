@@ -35,6 +35,7 @@ class LongbridgePaperTradingClient:
             "account": self._safe_call(self.account),
             "positions": self._safe_call(self.positions),
             "orders": self._safe_call(self.orders),
+            "executions": self._safe_call(self.executions),
         }
 
     def account(self) -> Any:
@@ -52,43 +53,28 @@ class LongbridgePaperTradingClient:
         ])
 
     def orders(self) -> Any:
-        return self._run_first_json([
-            ["order"],
-            ["order", "list"],
-            ["order", "today"],
-            ["order", "history"],
-            ["trades"],
-        ])
+        return self.client.run_json(["order"])
+
+    def executions(self) -> Any:
+        return self.client.run_json(["order", "executions"])
 
     def submit_order(self, request: PaperOrderRequest) -> Any:
-        symbol = request.symbol.upper()
         side_command = request.side.strip().lower()
-        quantity = str(request.quantity)
-        price = str(request.price) if request.price is not None else None
+        if side_command not in {"buy", "sell"}:
+            raise LongbridgeError(f"Unsupported order side: {request.side}")
 
-        candidates = [
-            ["order", side_command, symbol, quantity],
-            ["order", "--symbol", symbol, side_command, symbol, quantity],
-        ]
-        if price is not None:
-            enriched: list[list[str]] = []
-            for candidate in candidates:
-                enriched.append(candidate + ["--limit-price", price])
-                enriched.append(candidate + ["--price", price])
-                enriched.append([*candidate[:-2], "--limit-price", price, *candidate[-2:]])
-                enriched.append([*candidate[:-2], "--price", price, *candidate[-2:]])
-            candidates = enriched
-        return self._run_first_json(candidates)
+        args = ["order", side_command, request.symbol.upper(), str(request.quantity)]
+        if request.price is not None:
+            args.extend(["--price", str(request.price)])
+
+        return self.client.run_json(args, input_text="y\n", timeout=30)
 
     def cancel_order(self, order_id: str) -> Any:
         return self._run_first_json([
-            ["order", "cancel", "--order-id", order_id],
+            ["order", "cancel", order_id, "-y"],
+            ["order", "cancel", "-y", order_id],
             ["order", "cancel", order_id],
-            ["order", "cancel-order", "--order-id", order_id],
-            ["order", "--order-id", order_id, "cancel"],
-            ["cancel-order", order_id],
-            ["order-cancel", order_id],
-        ])
+        ], input_text="y\n")
 
     def _safe_call(self, fn: Any) -> dict[str, Any]:
         try:
@@ -96,11 +82,15 @@ class LongbridgePaperTradingClient:
         except LongbridgeError as exc:
             return {"ok": False, "error": str(exc)}
 
-    def _run_first_json(self, candidates: list[list[str]]) -> Any:
+    def _run_first_json(
+        self,
+        candidates: list[list[str]],
+        input_text: str | None = None,
+    ) -> Any:
         errors: list[str] = []
         for args in candidates:
             try:
-                return self.client.run_json(args)
+                return self.client.run_json(args, input_text=input_text, timeout=30)
             except LongbridgeError as exc:
                 errors.append(f"longbridge {' '.join(args)}: {exc}")
         raise LongbridgeError("; ".join(errors))
