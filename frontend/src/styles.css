@@ -301,6 +301,10 @@ h2 {
   background: #ffffff;
 }
 
+.panel > .metric-grid.compact + .recharts-responsive-container {
+  display: none;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -366,7 +370,6 @@ table {
 .compact-table {
   min-width: 560px;
 }
-
 th,
 td {
   padding: 11px 10px;
