@@ -106,7 +106,7 @@ export const copy = {
     orderType: "订单类型",
     timeInForce: "有效期",
     orderId: "订单 ID",
-    paperTradingRiskNote: "该页面只用于长桥模拟盘。所有下单/撤单都需要手动点击按钮触发，不会连接当前策略自动下单。",
+    paperTradingRiskNote: "",
     languageToggle: "EN",
     languageTitle: "切换到英文"
   },
@@ -215,7 +215,7 @@ export const copy = {
     orderType: "Order Type",
     timeInForce: "Time in Force",
     orderId: "Order ID",
-    paperTradingRiskNote: "This page is for Longbridge paper trading only. Orders and cancellations require manual button clicks and are not connected to strategy automation.",
+    paperTradingRiskNote: "",
     languageToggle: "中文",
     languageTitle: "Switch to Chinese"
   }
