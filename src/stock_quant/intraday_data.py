@@ -26,6 +26,42 @@ def intraday_history_path(data_dir: str | Path, symbol: str, period: str) -> Pat
     return Path(data_dir) / f"{symbol_to_filename(symbol.upper())}_{period}.json"
 
 
+def cached_intraday_symbols(data_dir: str | Path, period: str) -> list[str]:
+    """Return symbols that already have cached intraday JSON files."""
+    root = Path(data_dir)
+    if not root.exists():
+        return []
+
+    suffix = f"_{period}.json"
+    symbols: list[str] = []
+    for path in root.glob(f"*{suffix}"):
+        stem = path.name[: -len(suffix)]
+        symbols.append(stem.replace("_", ".").upper())
+    return _dedupe_symbols(symbols)
+
+
+def resolve_intraday_backtest_symbols(
+    config: AppConfig,
+    data_dir: str | Path,
+    explicit_symbols: list[str] | None = None,
+) -> list[str]:
+    """Resolve symbols for local intraday backtests.
+
+    Backtests run from local files. If symbols are omitted, prefer the files
+    that actually exist under ``data_dir`` so a partially cached universe can
+    still be backtested.
+    """
+    if explicit_symbols:
+        return _dedupe_symbols(explicit_symbols)
+
+    cached = cached_intraday_symbols(data_dir, config.intraday.period)
+    if cached:
+        return cached
+    if config.intraday.symbols:
+        return _dedupe_symbols(config.intraday.symbols)
+    return _dedupe_symbols(config.universe)
+
+
 def resolve_intraday_symbols(
     config: AppConfig,
     explicit_symbols: list[str] | None = None,
