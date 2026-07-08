@@ -4,8 +4,10 @@ from pathlib import Path
 
 from stock_quant.config import AppConfig, DataConfig, IntradayConfig, StrategyConfig
 from stock_quant.intraday_data import (
+    cached_intraday_symbols,
     fetch_intraday_history,
     intraday_history_path,
+    resolve_intraday_backtest_symbols,
     resolve_intraday_symbols,
 )
 
@@ -102,6 +104,30 @@ def test_resolve_intraday_symbols_falls_back_to_config_symbols() -> None:
     symbols = resolve_intraday_symbols(_config(), client=EmptyWatchlistClient())
 
     assert symbols == ["TSLA.US"]
+
+
+def test_cached_intraday_symbols_reads_existing_period_files(tmp_path: Path) -> None:
+    intraday_history_path(tmp_path, "AAPL.US", "5m").write_text("[]")
+    intraday_history_path(tmp_path, "MSFT.US", "5m").write_text("[]")
+    intraday_history_path(tmp_path, "TSLA.US", "1m").write_text("[]")
+
+    assert cached_intraday_symbols(tmp_path, "5m") == ["AAPL.US", "MSFT.US"]
+
+
+def test_resolve_intraday_backtest_symbols_prefers_cached_files(tmp_path: Path) -> None:
+    intraday_history_path(tmp_path, "MSFT.US", "5m").write_text("[]")
+
+    symbols = resolve_intraday_backtest_symbols(_config(), tmp_path)
+
+    assert symbols == ["MSFT.US"]
+
+
+def test_resolve_intraday_backtest_symbols_keeps_explicit_symbols_strict(tmp_path: Path) -> None:
+    intraday_history_path(tmp_path, "MSFT.US", "5m").write_text("[]")
+
+    symbols = resolve_intraday_backtest_symbols(_config(), tmp_path, explicit_symbols=["AAPL.US"])
+
+    assert symbols == ["AAPL.US"]
 
 
 def test_fetch_intraday_history_writes_symbol_period_files(tmp_path: Path) -> None:
