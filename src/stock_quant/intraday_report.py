@@ -37,6 +37,23 @@ def write_intraday_report(
     return written
 
 
+def read_intraday_report(report_dir: str | Path) -> dict[str, Any]:
+    """Read a previously written intraday report directory."""
+    root = Path(report_dir)
+    metrics_path = root / REPORT_FILENAMES["metrics"]
+    if not metrics_path.exists():
+        raise FileNotFoundError(f"No intraday report found at {root}")
+
+    return {
+        "report_dir": str(root),
+        "metrics": json.loads(metrics_path.read_text() or "{}"),
+        "equity_curve": _read_records_csv(root / REPORT_FILENAMES["equity_curve"]),
+        "daily_summary": _read_records_csv(root / REPORT_FILENAMES["daily_summary"]),
+        "trades": _read_records_csv(root / REPORT_FILENAMES["trades"]),
+        "signals": _read_records_csv(root / REPORT_FILENAMES["signals"]),
+    }
+
+
 def _write_records_csv(records: Any, path: Path) -> None:
     if not records:
         path.write_text("")
@@ -48,7 +65,28 @@ def _write_records_csv(records: Any, path: Path) -> None:
     frame.to_csv(path, index=False)
 
 
+def _read_records_csv(path: Path) -> list[dict[str, Any]]:
+    if not path.exists() or not path.read_text().strip():
+        return []
+    frame = pd.read_csv(path)
+    for column in frame.columns:
+        frame[column] = frame[column].map(_deserialize_cell)
+    return frame.to_dict(orient="records")
+
+
 def _serialize_cell(value: Any) -> Any:
     if isinstance(value, (dict, list, tuple)):
         return json.dumps(value, sort_keys=True)
     return value
+
+
+def _deserialize_cell(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{":
+        return value
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
