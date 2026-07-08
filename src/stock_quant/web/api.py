@@ -23,7 +23,7 @@ from stock_quant.analysis import (
 )
 from stock_quant.cache import DataCache
 from stock_quant.intraday_backtest import intraday_backtest, load_intraday_history
-from stock_quant.intraday_data import resolve_intraday_backtest_symbols
+from stock_quant.intraday_data import ensure_intraday_history_for_today, resolve_intraday_backtest_symbols
 from stock_quant.intraday_report import read_intraday_report, write_intraday_report
 from stock_quant.longbridge import LongbridgeClient
 
@@ -169,6 +169,7 @@ def create_app(
         report_dir: str = Query(default="reports/intraday"),
         commission_bps: float | None = Query(default=None),
         slippage_bps: float | None = Query(default=None),
+        auto_fetch_count: int = Query(default=1000, ge=1, le=2000),
     ) -> dict:
         config = get_config()
         data_dir = config.intraday.data_dir
@@ -180,6 +181,14 @@ def create_app(
                 data_dir,
                 explicit_symbols=symbols or None,
             )
+            fetched_symbols = ensure_intraday_history_for_today(
+                data_dir,
+                selected_symbols,
+                config.intraday.period,
+                config.intraday.session,
+                count=auto_fetch_count,
+                client=get_longbridge(),
+            )
             frames = load_intraday_history(data_dir, selected_symbols, config.intraday.period)
             result = intraday_backtest(
                 frames,
@@ -190,6 +199,8 @@ def create_app(
             write_intraday_report(result, report_dir)
             report = read_intraday_report(report_dir)
             report["symbols"] = selected_symbols
+            report["auto_fetched_symbols"] = fetched_symbols
+            report["auto_fetch_count"] = auto_fetch_count
             return report
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
