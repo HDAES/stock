@@ -11,4 +11,8 @@ reports/
 *.pyc
 *.egg-info/
 *.log
+.env
+.env.*
+!.env.example
+*.secret
 .DS_Store
