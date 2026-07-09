@@ -47,6 +47,28 @@ Generate the latest ranking from cached data:
 stock-quant rank --config config/default.json
 ```
 
+Send an account summary to the configured Feishu robot:
+
+```bash
+stock-quant account-report --config config/default.json --send
+```
+
+The Feishu webhook can be filled later in `config/default.json`:
+
+```json
+"notifications": {
+  "feishu_webhook_url": ""
+}
+```
+
+For US-market checks, schedule the command in New York time so daylight saving time is handled by the system timezone database. The two entries below run 10 minutes before the regular US equity open and 10 minutes after the regular close:
+
+```cron
+TZ=America/New_York
+20 9 * * 1-5 cd /Users/hades/Documents/stock && .venv/bin/stock-quant account-report --config config/default.json --send
+10 16 * * 1-5 cd /Users/hades/Documents/stock && .venv/bin/stock-quant account-report --config config/default.json --send
+```
+
 Start the API server:
 
 ```bash

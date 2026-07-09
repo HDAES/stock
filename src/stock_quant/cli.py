@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .account_report import build_account_report, format_account_report, send_feishu_text
 from .analysis import CacheMissError, evaluate_intraday, load_strategy_inputs, strategy_backtest
 from .cache import DataCache
 from .config import load_config
@@ -14,6 +15,7 @@ from .factors import build_factor_table
 from .intraday_backtest import intraday_backtest, load_intraday_history
 from .intraday_data import fetch_intraday_history, resolve_intraday_backtest_symbols, resolve_intraday_symbols
 from .intraday_report import write_intraday_report
+from .longbridge import LongbridgeClient
 
 
 def main() -> None:
@@ -85,6 +87,23 @@ def main() -> None:
         help="Directory for intraday report files when --save-report is used",
     )
 
+    account_report_parser = subparsers.add_parser(
+        "account-report",
+        help="Fetch account assets/positions and optionally notify Feishu",
+    )
+    account_report_parser.add_argument("--config", default="config/default.json")
+    account_report_parser.add_argument("--currency", default="USD")
+    account_report_parser.add_argument(
+        "--webhook-url",
+        default=None,
+        help="Feishu robot webhook URL. Defaults to notifications.feishu_webhook_url in config.",
+    )
+    account_report_parser.add_argument(
+        "--send",
+        action="store_true",
+        help="Send the report to Feishu when a webhook URL is configured.",
+    )
+
     args = parser.parse_args()
     if args.command == "fetch":
         run_fetch(args)
@@ -100,6 +119,8 @@ def main() -> None:
         run_intraday_watch(args)
     elif args.command == "intraday-backtest":
         run_intraday_backtest(args)
+    elif args.command == "account-report":
+        run_account_report(args)
 
 
 def run_fetch(args: argparse.Namespace) -> None:
@@ -268,6 +289,24 @@ def run_intraday_backtest(args: argparse.Namespace) -> None:
             for key, path in written.items()
         ]
         print(pd.DataFrame(rows).to_string(index=False))
+
+
+def run_account_report(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    webhook_url = args.webhook_url
+    if webhook_url is None:
+        webhook_url = config.notifications.feishu_webhook_url
+    report = build_account_report(LongbridgeClient(), currency=args.currency)
+    text = format_account_report(report)
+    print(text)
+    if args.send:
+        if not webhook_url:
+            print("")
+            print("Feishu webhook is empty; notification skipped.")
+            return
+        send_feishu_text(webhook_url, text)
+        print("")
+        print("Feishu notification sent.")
 
 
 def print_intraday_result(result: dict) -> None:

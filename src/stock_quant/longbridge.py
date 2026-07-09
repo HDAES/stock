@@ -40,11 +40,23 @@ class LongbridgeClient:
     def calc_index(self, symbol: str) -> list[dict]:
         return self.run_json(["calc-index", symbol])
 
+    def assets(self, currency: str = "USD") -> dict | list[dict]:
+        return self.run_json(["assets", "--currency", currency.upper()])
+
+    def positions(self) -> dict | list[dict]:
+        return self.run_json(["positions"])
+
     def constituent(self, index_symbol: str) -> dict | list[dict]:
         return self.run_json(["constituent", index_symbol])
 
     def watchlist(self) -> dict | list[dict]:
         return self.run_json(["watchlist"])
+
+    def auth_status(self) -> dict | list[dict]:
+        return self.run_json(["auth", "status"])
+
+    def auth_status_text(self) -> str:
+        return self.run_text(["auth", "status"])
 
     def market_status(self) -> dict | list[dict]:
         return self.run_json(["market-status"])

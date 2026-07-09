@@ -227,10 +227,26 @@ function App() {
   }
 
   async function updateAutoTrade(enabled: boolean) {
+    let confirmNonSimulated = false;
+    if (enabled) {
+      const account = autoTrade?.account;
+      if (!account?.is_simulated) {
+        const accountText = [
+          `账户: ${account?.account_label ?? account?.account_type_label ?? "unknown"}`,
+          `账户类型: ${account?.account_type_label ?? "unknown"}`,
+          `账户渠道: ${account?.account_channel ?? "unknown"}`,
+          `账号: ${account?.account_no_masked ?? "unknown"}`
+        ].join("\n");
+        confirmNonSimulated = window.confirm(
+          `当前 Longbridge CLI 账户不是明确的模拟账户，开启后可能向真实综合账户提交委托。\n\n${accountText}\n\n确认开启实时自动交易？`
+        );
+        if (!confirmNonSimulated) return;
+      }
+    }
     setUpdatingAutoTrade(true);
     setError(null);
     try {
-      const payload = await api.updateIntradayAutoTrade(enabled);
+      const payload = await api.updateIntradayAutoTrade(enabled, confirmNonSimulated);
       setAutoTrade(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update auto trade failed");
@@ -254,6 +270,20 @@ function App() {
       await loadPaperSummary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Longbridge paper order failed");
+    } finally {
+      setSubmittingPaper(false);
+    }
+  }
+
+  async function sendPaperFeishuReport() {
+    setSubmittingPaper(true);
+    setError(null);
+    setPaperOperationResult(null);
+    try {
+      const payload = await api.longbridgePaperFeishuReport();
+      setPaperOperationResult(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Feishu report failed");
     } finally {
       setSubmittingPaper(false);
     }
@@ -328,6 +358,7 @@ function App() {
             submitting={submittingPaper}
             updatingAutoTrade={updatingAutoTrade}
             onRefresh={loadPaperSummary}
+            onSendFeishuReport={sendPaperFeishuReport}
             onAutoTradeChange={updateAutoTrade}
             onOrderChange={setPaperOrder}
             onSubmitOrder={submitPaperOrder}
@@ -415,7 +446,7 @@ function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Co
   );
 }
 
-function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, operationResult, loading, submitting, updatingAutoTrade, onRefresh, onAutoTradeChange, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; autoTrade: IntradayAutoTradeState | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; updatingAutoTrade: boolean; onRefresh: () => void; onAutoTradeChange: (enabled: boolean) => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
+function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, operationResult, loading, submitting, updatingAutoTrade, onRefresh, onSendFeishuReport, onAutoTradeChange, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; autoTrade: IntradayAutoTradeState | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; updatingAutoTrade: boolean; onRefresh: () => void; onSendFeishuReport: () => void; onAutoTradeChange: (enabled: boolean) => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
   const account = unwrapPaperPayload(summary?.account);
   const positions = rowsFromPayload(unwrapPaperPayload(summary?.positions));
   const orders = rowsFromPayload(unwrapPaperPayload(summary?.orders));
@@ -425,7 +456,7 @@ function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, oper
 
   return (
     <section className="stack">
-      <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div>
+      <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><div className="topbar-actions"><button className="text-button wide" onClick={onSendFeishuReport} disabled={submitting}>{submitting ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}飞书报告</button><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div></div>
       <div className="alert">{t.paperTradingRiskNote}</div>
       <AutoTradeSwitch state={autoTrade} updating={updatingAutoTrade} onChange={onAutoTradeChange} />
       <PaperAccountPanel metrics={accountMetrics} raw={summary?.account} />
@@ -459,11 +490,12 @@ function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, oper
 
 function AutoTradeSwitch({ state, updating, onChange }: { state: IntradayAutoTradeState | null; updating: boolean; onChange: (enabled: boolean) => void }) {
   const enabled = Boolean(state?.enabled);
+  const account = state?.account;
   return (
     <div className="panel">
       <div className="panel-header"><h2>盘中自动交易</h2><span>{enabled ? "已开启" : "已关闭"}</span></div>
-      <p className="muted">开启后，日内交易轮询在开盘期间遇到 BUY / SELL 信号，会自动向当前 Longbridge CLI 模拟账户提交买卖委托；关闭时只生成信号，不下单。</p>
-      <div className="metric-grid compact"><Metric label="状态" value={enabled ? "开启" : "关闭"} /><Metric label="模式" value={state?.mode ?? "longbridge_paper"} /><Metric label="更新时间" value={formatDateTime(state?.updated_at)} /></div>
+      <p className="muted">开启后，后台轮询会在开盘期间每分钟拉取 5m K 线并在 BUY / SELL 信号出现时提交委托；关闭时后台不拉取 5m K 线。</p>
+      <div className="metric-grid compact"><Metric label="状态" value={enabled ? "开启" : "关闭"} /><Metric label="模式" value={state?.mode ?? "longbridge_paper"} /><Metric label="账户" value={account?.account_label ?? account?.account_type_label ?? "unknown"} /><Metric label="账号" value={account?.account_no_masked ?? "unknown"} /><Metric label="更新时间" value={formatDateTime(state?.updated_at)} /></div>
       <button className="text-button wide" onClick={() => onChange(!enabled)} disabled={updating}>{updating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{enabled ? "关闭自动交易" : "开启自动交易"}</button>
     </div>
   );

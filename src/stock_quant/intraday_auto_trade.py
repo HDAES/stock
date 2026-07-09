@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,14 +37,24 @@ def load_auto_trade_state(config: AppConfig) -> dict[str, Any]:
         "enabled": bool(payload.get("enabled", False)),
         "mode": str(payload.get("mode") or DEFAULT_MODE),
         "updated_at": payload.get("updated_at"),
+        "account": payload.get("account") if isinstance(payload.get("account"), dict) else None,
+        "confirmed_non_simulated": bool(payload.get("confirmed_non_simulated", False)),
     }
 
 
-def save_auto_trade_state(config: AppConfig, enabled: bool, mode: str = DEFAULT_MODE) -> dict[str, Any]:
+def save_auto_trade_state(
+    config: AppConfig,
+    enabled: bool,
+    mode: str = DEFAULT_MODE,
+    account_status: dict[str, Any] | None = None,
+    confirmed_non_simulated: bool = False,
+) -> dict[str, Any]:
     state = {
         "enabled": bool(enabled),
         "mode": mode or DEFAULT_MODE,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "account": account_status,
+        "confirmed_non_simulated": bool(confirmed_non_simulated),
     }
     path = auto_trade_state_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +85,15 @@ def maybe_execute_auto_trade(
         return result
     if action not in {"BUY", "SELL"}:
         result["reason"] = "not_trade_signal"
+        return result
+
+    account_status = _account_status_from_state(state)
+    result["account"] = account_status
+    _log(logger, f"auto trade account {format_account_status(account_status)}")
+    if account_status["requires_confirmation"] and not state.get("confirmed_non_simulated"):
+        result["reason"] = "account_confirmation_required"
+        _log(logger, "auto trade blocked: non-simulated or unknown account requires explicit confirmation")
+        record_auto_trade_event(config, {**result, "bar_id": signal.get("bar_id"), "timestamp": signal.get("timestamp")})
         return result
 
     price = _safe_float(signal.get("execution_price") or signal.get("price") or (trade or {}).get("price"))
@@ -313,15 +333,173 @@ def auto_trade_orders_path(config: AppConfig) -> Path:
     return _intraday_dir(config) / "auto_trade_orders.json"
 
 
+def detect_longbridge_account_status(
+    client: LongbridgeClient,
+    configured_label: str | None = None,
+    configured_is_simulated: bool | None = None,
+) -> dict[str, Any]:
+    """Return a conservative account-risk view from Longbridge auth status."""
+    try:
+        payload = client.auth_status()
+    except LongbridgeError as exc:
+        return _configured_or_unknown_account_status(configured_label, configured_is_simulated, error=str(exc))
+    except Exception as exc:
+        return _configured_or_unknown_account_status(configured_label, configured_is_simulated, error=str(exc))
+
+    account = payload.get("account") if isinstance(payload, dict) and isinstance(payload.get("account"), dict) else {}
+    raw_account_type = account.get("account_type")
+    account_name = account.get("name") or _pretty_account_name(client)
+    account_label = str(account_name or raw_account_type or configured_label or "unknown")
+    searchable_account_text = " ".join(
+        str(value or "")
+        for value in (
+            raw_account_type,
+            account_name,
+            configured_label,
+            account.get("account_channel"),
+        )
+    ).strip().lower()
+    detected_simulated = bool(searchable_account_text) and any(
+        token in searchable_account_text for token in SIMULATED_ACCOUNT_TYPE_TOKENS
+    )
+    is_simulated = detected_simulated if detected_simulated or configured_is_simulated is None else configured_is_simulated
+    return {
+        "account_type": raw_account_type,
+        "account_name": account_name,
+        "account_label": account_label,
+        "account_type_label": str(raw_account_type or "unknown"),
+        "account_channel": account.get("account_channel"),
+        "account_no_masked": _mask_account_no(account.get("account_no")),
+        "is_simulated": is_simulated,
+        "requires_confirmation": not is_simulated,
+        "source": _account_status_source(account_name, raw_account_type, configured_label),
+    }
+
+
+def format_account_status(status: dict[str, Any] | None) -> str:
+    account = status or _unknown_account_status()
+    return (
+        f"account={account.get('account_label') or account.get('account_type_label') or 'unknown'} "
+        f"type={account.get('account_type_label') or 'unknown'} "
+        f"channel={account.get('account_channel') or 'unknown'} "
+        f"account_no={account.get('account_no_masked') or 'unknown'} "
+        f"simulated={bool(account.get('is_simulated'))} "
+        f"requires_confirmation={bool(account.get('requires_confirmation', True))}"
+    )
+
+
 def _intraday_dir(config: AppConfig) -> Path:
     return config.data.cache_dir.parent / "intraday"
 
 
 def _default_state(error: str | None = None) -> dict[str, Any]:
-    state: dict[str, Any] = {"enabled": False, "mode": DEFAULT_MODE, "updated_at": None}
+    state: dict[str, Any] = {
+        "enabled": False,
+        "mode": DEFAULT_MODE,
+        "updated_at": None,
+        "account": None,
+        "confirmed_non_simulated": False,
+    }
     if error:
         state["error"] = error
     return state
+
+
+def _account_status_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    account = state.get("account")
+    if isinstance(account, dict):
+        return {
+            "account_type": account.get("account_type"),
+            "account_name": account.get("account_name"),
+            "account_label": account.get("account_label") or account.get("account_name") or account.get("account_type_label") or str(account.get("account_type") or "unknown"),
+            "account_type_label": account.get("account_type_label") or str(account.get("account_type") or "unknown"),
+            "account_channel": account.get("account_channel"),
+            "account_no_masked": account.get("account_no_masked"),
+            "is_simulated": bool(account.get("is_simulated")),
+            "requires_confirmation": bool(account.get("requires_confirmation", True)),
+            **({"error": account.get("error")} if account.get("error") else {}),
+        }
+    return _unknown_account_status()
+
+
+def _unknown_account_status(error: str | None = None) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "account_type": None,
+        "account_name": None,
+        "account_label": "unknown",
+        "account_type_label": "unknown",
+        "account_channel": None,
+        "account_no_masked": None,
+        "is_simulated": False,
+        "requires_confirmation": True,
+        "source": "unknown",
+    }
+    if error:
+        status["error"] = error
+    return status
+
+
+def _configured_or_unknown_account_status(
+    configured_label: str | None,
+    configured_is_simulated: bool | None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    if not configured_label and configured_is_simulated is None:
+        return _unknown_account_status(error)
+    account_label = str(configured_label or "unknown")
+    is_simulated = bool(configured_is_simulated)
+    status = {
+        "account_type": None,
+        "account_name": configured_label or None,
+        "account_label": account_label,
+        "account_type_label": "unknown",
+        "account_channel": None,
+        "account_no_masked": None,
+        "is_simulated": is_simulated,
+        "requires_confirmation": not is_simulated,
+        "source": "config",
+    }
+    if error:
+        status["error"] = error
+    return status
+
+
+def _pretty_account_name(client: LongbridgeClient) -> str | None:
+    try:
+        text = client.auth_status_text()
+    except Exception:
+        return None
+    for line in _strip_ansi(text).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Account"):
+            value = stripped[len("Account") :].strip()
+            return value or None
+    return None
+
+
+def _account_status_source(account_name: Any, account_type: Any, configured_label: str | None) -> str:
+    if account_name:
+        return "longbridge_pretty" if configured_label and account_name == configured_label else "longbridge"
+    if account_type:
+        return "longbridge"
+    if configured_label:
+        return "config"
+    return "unknown"
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def _mask_account_no(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) <= 4:
+        return "*" * len(text)
+    return f"{'*' * max(0, len(text) - 4)}{text[-4:]}"
 
 
 def _safe_float(value: Any) -> float | None:
@@ -409,6 +587,8 @@ POSITION_QUANTITY_KEYS = ["quantity", "qty", "available_quantity", "availableqty
 POSITION_AVG_PRICE_KEYS = ["avg_price", "average_price", "cost_price", "cost", "成本价", "平均价"]
 ORDER_ID_KEYS = ["order_id", "orderid", "id", "订单id", "订单号"]
 ORDER_STATUS_KEYS = ["status", "state", "order_status", "orderstatus", "状态"]
+SIMULATED_ACCOUNT_TYPE_TOKENS = {"paper", "simulated", "simulation", "virtual", "demo", "mock", "sandbox", "模拟"}
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 FILLED_ORDER_STATUSES = {"filled", "executed", "done", "completed", "fullfilled", "全部成交", "已成交"}
 CANCELED_ORDER_STATUSES = {"canceled", "cancelled", "cancel", "withdrawn", "rejected", "expired", "已撤销", "撤单", "废单"}
 TERMINAL_ORDER_STATUSES = {
