@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
@@ -76,6 +77,13 @@ def _resolve_config_path(config_path: Path, value: str | Path) -> Path:
     return (config_path.parent / ".." / path).resolve()
 
 
+def _resolve_env_string(value: object) -> str:
+    text = str(value or "")
+    if text.startswith("${") and text.endswith("}") and len(text) > 3:
+        return os.environ.get(text[2:-1], "")
+    return os.path.expandvars(text)
+
+
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
     raw = json.loads(config_path.read_text())
@@ -123,7 +131,7 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         factor_weights={key: float(value) for key, value in raw["factor_weights"].items()},
         notifications=NotificationConfig(
-            feishu_webhook_url=str(notifications.get("feishu_webhook_url", "")),
+            feishu_webhook_url=_resolve_env_string(notifications.get("feishu_webhook_url", "")),
         ),
         longbridge_account=LongbridgeAccountConfig(
             account_label=str(longbridge_account.get("account_label", "")),
