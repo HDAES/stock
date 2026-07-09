@@ -19,7 +19,7 @@ from .intraday import (
     market_is_open,
     normalize_intraday_kline,
 )
-from .intraday_auto_trade import broker_positions, load_auto_trade_state, maybe_execute_auto_trade
+from .intraday_auto_trade import broker_positions, load_auto_trade_state, maybe_execute_auto_trade, reconcile_auto_trade_orders
 from .intraday_data import configured_intraday_symbols, merge_intraday_history
 from .longbridge import LongbridgeClient
 from .longbridge_paper import LongbridgePaperTradingClient
@@ -215,8 +215,10 @@ def evaluate_intraday(
     auto_trade_enabled = bool(load_auto_trade_state(config).get("enabled"))
     broker_position_map = {}
     if auto_trade_enabled:
+        paper_client = LongbridgePaperTradingClient(longbridge)
+        reconcile_auto_trade_orders(config, paper_client, logger)
         try:
-            broker_position_map = broker_positions(LongbridgePaperTradingClient(longbridge))
+            broker_position_map = broker_positions(paper_client)
             _log_intraday(logger, f"loaded {len(broker_position_map)} Longbridge paper positions")
         except Exception as exc:
             _log_intraday(logger, f"Longbridge paper positions unavailable: {exc}")

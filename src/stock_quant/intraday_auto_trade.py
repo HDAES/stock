@@ -92,6 +92,7 @@ def maybe_execute_auto_trade(
                 "order": order_payload,
             }
         )
+        record_pending_auto_trade_order(config, request, order_payload, signal)
         _log(logger, f"auto trade submitted {action} {symbol} qty={request.quantity} price={order_price}")
     except LongbridgeError as exc:
         result.update({"reason": "submit_failed", "error": str(exc)})
@@ -161,6 +162,137 @@ def broker_positions(client: LongbridgePaperTradingClient) -> dict[str, BrokerPo
     return positions
 
 
+def reconcile_auto_trade_orders(
+    config: AppConfig,
+    paper_client: LongbridgePaperTradingClient,
+    logger: Any | None = None,
+) -> list[dict[str, Any]]:
+    records = load_auto_trade_orders(config)
+    if not records:
+        return []
+
+    try:
+        broker_rows = _rows_from_payload(paper_client.orders())
+    except LongbridgeError as exc:
+        _log(logger, f"order lifecycle skipped: {exc}")
+        return records
+
+    broker_orders = {
+        order_id: row
+        for row in broker_rows
+        if (order_id := _extract_text(row, ORDER_ID_KEYS))
+    }
+    now = datetime.now()
+    changed = False
+
+    for record in records:
+        status = str(record.get("status") or "").lower()
+        if status in TERMINAL_ORDER_STATUSES:
+            continue
+
+        order_id = str(record.get("order_id") or "")
+        broker_order = broker_orders.get(order_id)
+        broker_status = _order_status(broker_order) if broker_order else None
+        if broker_status in FILLED_ORDER_STATUSES:
+            record.update({"status": "filled", "broker_status": broker_status, "updated_at": now.isoformat(timespec="seconds")})
+            changed = True
+            continue
+        if broker_status in CANCELED_ORDER_STATUSES:
+            record.update({"status": "canceled", "broker_status": broker_status, "updated_at": now.isoformat(timespec="seconds")})
+            changed = True
+            continue
+
+        submitted_at = _parse_datetime(record.get("submitted_at"))
+        timeout_seconds = _safe_int(record.get("timeout_seconds")) or config.intraday.order_timeout_seconds
+        if submitted_at is None or (now - submitted_at).total_seconds() < timeout_seconds:
+            if broker_status and broker_status != record.get("broker_status"):
+                record.update({"broker_status": broker_status, "updated_at": now.isoformat(timespec="seconds")})
+                changed = True
+            continue
+
+        if not order_id:
+            record.update({"status": "expired_unknown_order_id", "updated_at": now.isoformat(timespec="seconds")})
+            changed = True
+            continue
+
+        try:
+            cancel_payload = paper_client.cancel_order(order_id)
+            record.update(
+                {
+                    "status": "cancel_requested",
+                    "broker_status": broker_status,
+                    "cancel_requested_at": now.isoformat(timespec="seconds"),
+                    "cancel": cancel_payload,
+                    "updated_at": now.isoformat(timespec="seconds"),
+                }
+            )
+            _log(logger, f"auto trade canceled stale order {order_id} {record.get('symbol')} age>{timeout_seconds}s")
+        except LongbridgeError as exc:
+            record.update(
+                {
+                    "status": "cancel_failed",
+                    "broker_status": broker_status,
+                    "cancel_error": str(exc),
+                    "updated_at": now.isoformat(timespec="seconds"),
+                }
+            )
+            _log(logger, f"auto trade cancel failed {order_id}: {exc}")
+        changed = True
+
+    if changed:
+        save_auto_trade_orders(config, records)
+    return records
+
+
+def record_pending_auto_trade_order(
+    config: AppConfig,
+    request: PaperOrderRequest,
+    order_payload: Any,
+    signal: dict[str, Any],
+) -> None:
+    order_id = _extract_order_id(order_payload)
+    records = load_auto_trade_orders(config)
+    now = datetime.now().isoformat(timespec="seconds")
+    records.append(
+        {
+            "order_id": order_id,
+            "status": "pending" if order_id else "submitted_unknown_order_id",
+            "symbol": request.symbol,
+            "side": request.side.upper(),
+            "quantity": request.quantity,
+            "limit_price": request.price,
+            "order_type": request.order_type,
+            "time_in_force": request.time_in_force,
+            "submitted_at": now,
+            "updated_at": now,
+            "timeout_seconds": config.intraday.order_timeout_seconds,
+            "bar_id": signal.get("bar_id"),
+            "signal_timestamp": signal.get("timestamp"),
+            "broker_payload": order_payload,
+        }
+    )
+    save_auto_trade_orders(config, records[-100:])
+
+
+def load_auto_trade_orders(config: AppConfig) -> list[dict[str, Any]]:
+    path = auto_trade_orders_path(config)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [record for record in payload if isinstance(record, dict)]
+
+
+def save_auto_trade_orders(config: AppConfig, records: list[dict[str, Any]]) -> None:
+    path = auto_trade_orders_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(records, indent=2))
+
+
 def record_auto_trade_event(config: AppConfig, event: dict[str, Any]) -> None:
     path = auto_trade_log_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +307,10 @@ def auto_trade_state_path(config: AppConfig) -> Path:
 
 def auto_trade_log_path(config: AppConfig) -> Path:
     return _intraday_dir(config) / "auto_trades.jsonl"
+
+
+def auto_trade_orders_path(config: AppConfig) -> Path:
+    return _intraday_dir(config) / "auto_trade_orders.json"
 
 
 def _intraday_dir(config: AppConfig) -> Path:
@@ -209,6 +345,30 @@ def _round_price(value: float) -> float:
     if value >= 1:
         return round(value, 2)
     return round(value, 4)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _extract_order_id(payload: Any) -> str | None:
+    for row in _rows_from_payload(payload):
+        order_id = _extract_text(row, ORDER_ID_KEYS)
+        if order_id:
+            return order_id
+    return None
+
+
+def _order_status(row: dict[str, Any] | None) -> str | None:
+    if not row:
+        return None
+    status = _extract_text(row, ORDER_STATUS_KEYS)
+    return status.lower() if status else None
 
 
 def _log(logger: Any | None, message: str) -> None:
@@ -247,6 +407,16 @@ ACCOUNT_EQUITY_KEYS = [
 POSITION_SYMBOL_KEYS = ["symbol", "code", "ticker", "security_code", "标的", "代码"]
 POSITION_QUANTITY_KEYS = ["quantity", "qty", "available_quantity", "availableqty", "可用数量", "数量", "持仓数量"]
 POSITION_AVG_PRICE_KEYS = ["avg_price", "average_price", "cost_price", "cost", "成本价", "平均价"]
+ORDER_ID_KEYS = ["order_id", "orderid", "id", "订单id", "订单号"]
+ORDER_STATUS_KEYS = ["status", "state", "order_status", "orderstatus", "状态"]
+FILLED_ORDER_STATUSES = {"filled", "executed", "done", "completed", "fullfilled", "全部成交", "已成交"}
+CANCELED_ORDER_STATUSES = {"canceled", "cancelled", "cancel", "withdrawn", "rejected", "expired", "已撤销", "撤单", "废单"}
+TERMINAL_ORDER_STATUSES = {
+    "filled",
+    "canceled",
+    "cancel_requested",
+    "expired_unknown_order_id",
+}
 
 
 def _extract_account_number(payload: Any, aliases: list[str]) -> float | None:
@@ -265,7 +435,7 @@ def _rows_from_payload(payload: Any) -> list[dict[str, Any]]:
         return [item for item in payload if isinstance(item, dict)]
     if not isinstance(payload, dict):
         return []
-    for key in ("data", "items", "list", "records", "rows", "positions", "account"):
+    for key in ("data", "items", "list", "records", "rows", "positions", "orders", "account"):
         value = payload.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]

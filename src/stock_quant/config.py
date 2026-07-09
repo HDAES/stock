@@ -42,6 +42,7 @@ class IntradayConfig:
     data_dir: Path = Path("data/intraday/kline")
     commission_bps: float = 0.0
     slippage_bps: float = 0.0
+    order_timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ def load_config(path: str | Path) -> AppConfig:
             data_dir=_resolve_config_path(config_path, intraday.get("data_dir", "data/intraday/kline")),
             commission_bps=float(intraday.get("commission_bps", 0.0)),
             slippage_bps=float(intraday.get("slippage_bps", 0.0)),
+            order_timeout_seconds=int(intraday.get("order_timeout_seconds", 120)),
         ),
         factor_weights={key: float(value) for key, value in raw["factor_weights"].items()},
     )

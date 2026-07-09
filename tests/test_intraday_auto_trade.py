@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from stock_quant.config import AppConfig, DataConfig, IntradayConfig, StrategyConfig
-from stock_quant.intraday_auto_trade import load_auto_trade_state, maybe_execute_auto_trade, save_auto_trade_state
+from stock_quant.intraday_auto_trade import (
+    auto_trade_orders_path,
+    load_auto_trade_orders,
+    load_auto_trade_state,
+    maybe_execute_auto_trade,
+    reconcile_auto_trade_orders,
+    save_auto_trade_orders,
+    save_auto_trade_state,
+)
+from stock_quant.longbridge_paper import LongbridgePaperTradingClient
 
 
 class FakeLongbridgeClient:
@@ -11,6 +22,7 @@ class FakeLongbridgeClient:
         self.calls: list[tuple[list[str], str | None, float | None]] = []
         self.account_payload = {"cash": "1000", "total_assets": "1000"}
         self.positions_payload: list[dict[str, str]] = []
+        self.orders_payload: list[dict[str, str]] = []
 
     def run_json(self, args: list[str], input_text: str | None = None, timeout: float | None = None):
         self.calls.append((args, input_text, timeout))
@@ -18,6 +30,10 @@ class FakeLongbridgeClient:
             return self.account_payload
         if args == ["positions"]:
             return self.positions_payload
+        if args == ["order"]:
+            return self.orders_payload
+        if args[:2] == ["order", "cancel"]:
+            return {"canceled": args[-1]}
         return {"order_id": "1", "args": args}
 
 
@@ -51,6 +67,10 @@ def test_auto_trade_submits_longbridge_buy_from_broker_account_when_enabled(tmp_
     assert result["quantity"] == 1
     assert client.calls[-1][0] == ["order", "buy", "AAPL.US", "1", "--price", "100.12"]
     assert client.calls[-1][1] == "y\n"
+    orders = load_auto_trade_orders(config)
+    assert orders[0]["order_id"] == "1"
+    assert orders[0]["status"] == "pending"
+    assert orders[0]["symbol"] == "AAPL.US"
 
 
 def test_auto_trade_submits_longbridge_sell_from_broker_position(tmp_path: Path) -> None:
@@ -74,6 +94,33 @@ def test_auto_trade_submits_longbridge_sell_from_broker_position(tmp_path: Path)
     assert result["submitted"] is True
     assert result["quantity"] == 7
     assert client.calls[-1][0] == ["order", "sell", "AAPL.US", "7", "--price", "99.99"]
+
+
+def test_reconcile_auto_trade_orders_cancels_stale_pending_order(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    client = FakeLongbridgeClient()
+    submitted_at = (datetime.now() - timedelta(seconds=300)).isoformat(timespec="seconds")
+    save_auto_trade_orders(
+        config,
+        [
+            {
+                "order_id": "old-1",
+                "status": "pending",
+                "symbol": "AAPL.US",
+                "side": "BUY",
+                "quantity": 1,
+                "submitted_at": submitted_at,
+                "timeout_seconds": 120,
+            }
+        ],
+    )
+    client.orders_payload = [{"order_id": "old-1", "status": "submitted"}]
+
+    records = reconcile_auto_trade_orders(config, LongbridgePaperTradingClient(client))  # type: ignore[arg-type]
+
+    assert records[0]["status"] == "cancel_requested"
+    assert any(call[0][:2] == ["order", "cancel"] for call in client.calls)
+    assert json.loads(auto_trade_orders_path(config).read_text())[0]["status"] == "cancel_requested"
 
 
 def _config(tmp_path: Path) -> AppConfig:

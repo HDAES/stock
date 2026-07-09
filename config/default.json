@@ -53,6 +53,7 @@
     "data_dir": "data/intraday/kline",
     "commission_bps": 1,
     "slippage_bps": 3,
+    "order_timeout_seconds": 120,
     "symbols": [
       "AAPL.US",
       "NVDA.US",
