@@ -415,10 +415,14 @@ def _completed_intraday_frame(frame: pd.DataFrame, period: str) -> pd.DataFrame:
 
     minutes = _period_minutes(period)
     now = pd.Timestamp.now(tz=MARKET_TIMEZONE).tz_localize(None)
-    cutoff = now - pd.Timedelta(minutes=minutes)
-    today = now.date()
     dates = pd.to_datetime(frame["date"], errors="coerce")
-    completed = frame[(dates <= cutoff) & (dates.dt.date == today)]
+    latest = dates.max()
+    if pd.isna(latest):
+        return frame.iloc[0:0].copy()
+
+    reference_time = now if latest.date() == now.date() else latest + pd.Timedelta(minutes=minutes)
+    cutoff = reference_time - pd.Timedelta(minutes=minutes)
+    completed = frame[(dates <= cutoff) & (dates.dt.date == latest.date())]
     return completed.reset_index(drop=True)
 
 

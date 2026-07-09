@@ -56,7 +56,13 @@
     "symbols": [
       "AAPL.US",
       "NVDA.US",
-      "TSLA.US"
+      "TSLA.US",
+      "MSFT.US",
+      "UNH.US",
+      "ORCL.US",
+      "GOOGL.US",
+      "AMD.US",
+      "META.US"
     ]
   },
   "factor_weights": {

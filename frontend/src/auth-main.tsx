@@ -31,6 +31,8 @@ function base64ToBytes(value: string) {
 
 async function derivePasswordHash(password: string, salt: Uint8Array) {
   const encoder = new TextEncoder();
+  const saltBytes = new Uint8Array(salt.byteLength);
+  saltBytes.set(salt);
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
     encoder.encode(password),
@@ -42,7 +44,7 @@ async function derivePasswordHash(password: string, salt: Uint8Array) {
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt,
+      salt: saltBytes,
       iterations: PBKDF2_ITERATIONS
     },
     keyMaterial,

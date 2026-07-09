@@ -131,7 +131,7 @@ def evaluate_trend_signal(
     symbol: str,
     frame: pd.DataFrame,
     config: IntradayConfig,
-    has_position: bool,
+    has_position: bool = False,
     entry_price: float | None = None,
     daily_stop: bool = False,
     market_open: bool = True,
