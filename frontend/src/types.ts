@@ -138,6 +138,19 @@ export type IntradayAutoTradeState = {
   mode: string;
   updated_at?: string | null;
   error?: string;
+  confirmed_non_simulated?: boolean;
+  account?: {
+    account_type?: string | null;
+    account_name?: string | null;
+    account_label?: string | null;
+    account_type_label?: string | null;
+    account_channel?: string | null;
+    account_no_masked?: string | null;
+    is_simulated?: boolean;
+    requires_confirmation?: boolean;
+    source?: string;
+    error?: string;
+  } | null;
 };
 
 export type LongbridgePaperSummary = {

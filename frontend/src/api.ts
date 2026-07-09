@@ -3,7 +3,6 @@ import type {
   BacktestResult,
   IntradayAutoTradeState,
   IntradayReport,
-  IntradayState,
   KlinePoint,
   LongbridgePaperOrderPayload,
   LongbridgePaperSummary,
@@ -50,18 +49,20 @@ export const api = {
     ),
   rank: () => request<RankRow[]>("/api/strategy/rank"),
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
-  intradayState: () => request<IntradayState>("/api/intraday/state"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
   intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
-  intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" }),
   intradayAutoTrade: () => request<IntradayAutoTradeState>("/api/intraday/auto-trade"),
-  updateIntradayAutoTrade: (enabled: boolean) =>
+  updateIntradayAutoTrade: (enabled: boolean, confirmNonSimulated = false) =>
     request<IntradayAutoTradeState>("/api/intraday/auto-trade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled })
+      body: JSON.stringify({ enabled, confirm_non_simulated: confirmNonSimulated })
     }),
   longbridgePaperSummary: () => request<LongbridgePaperSummary>("/api/longbridge-paper/summary"),
+  longbridgePaperFeishuReport: () =>
+    request<unknown>("/api/longbridge-paper/feishu-report", {
+      method: "POST"
+    }),
   longbridgePaperOrder: (payload: LongbridgePaperOrderPayload) =>
     request<unknown>("/api/longbridge-paper/order", {
       method: "POST",

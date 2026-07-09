@@ -4,6 +4,8 @@ import pandas as pd
 import pytest
 
 from stock_quant.cache import symbol_to_filename
+from stock_quant.config import load_config
+from stock_quant.intraday_auto_trade import save_auto_trade_state
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
@@ -70,22 +72,112 @@ def test_api_intraday_evaluate_uses_fake_longbridge_client(tmp_path):
 
     assert response.status_code == 200
     data = response.json()
-    assert "AAPL.US" in data["positions"]
+    assert data["positions"] == {}
     assert data["last_signals"][0]["action"] == "BUY"
 
 
-def test_api_startup_auto_scans_intraday_when_market_open(tmp_path):
+def test_api_startup_skips_background_kline_scan_when_auto_trade_disabled(tmp_path):
     config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"], poll_seconds=60)
-    with TestClient(create_app(config_path, longbridge_client=_FakeLongbridge())) as client:
+    longbridge = _FakeLongbridge()
+    with TestClient(create_app(config_path, longbridge_client=longbridge)) as client:
         response = client.get("/api/intraday/state")
 
     assert response.status_code == 200
     data = response.json()
-    assert "AAPL.US" in data["positions"]
+    assert data["positions"] == {}
+    assert data["last_signals"] == []
+    assert longbridge.kline_calls == []
+
+
+def test_api_startup_auto_scans_intraday_when_auto_trade_enabled_and_market_open(tmp_path):
+    config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"], poll_seconds=60)
+    config = load_config(config_path)
+    save_auto_trade_state(
+        config,
+        True,
+        account_status={
+            "account_label": "Paper Trading",
+            "account_type_label": "unknown",
+            "is_simulated": True,
+            "requires_confirmation": False,
+        },
+    )
+    longbridge = _FakeLongbridge()
+    with TestClient(create_app(config_path, longbridge_client=longbridge)) as client:
+        response = client.get("/api/intraday/state")
+
+    assert response.status_code == 200
+    data = response.json()
     assert data["last_signals"][0]["action"] == "BUY"
+    assert longbridge.kline_calls == ["AAPL.US"]
 
 
-def _write_web_fixture(tmp_path, intraday_symbols=None, poll_seconds=60):
+def test_api_requires_confirmation_to_enable_auto_trade_for_unknown_account(tmp_path):
+    config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"])
+    longbridge = _FakeLongbridge()
+    longbridge.auth_status_payload = {"account": {"account_type": None, "account_no": "123456789"}}
+    client = TestClient(create_app(config_path, longbridge_client=longbridge, auto_intraday=False))
+
+    response = client.post("/api/intraday/auto-trade", json={"enabled": True})
+
+    assert response.status_code == 409
+    assert "需要确认" in response.json()["detail"]
+
+    confirmed_response = client.post(
+        "/api/intraday/auto-trade",
+        json={"enabled": True, "confirm_non_simulated": True},
+    )
+
+    assert confirmed_response.status_code == 200
+    data = confirmed_response.json()
+    assert data["enabled"] is True
+    assert data["confirmed_non_simulated"] is True
+    assert data["account"]["requires_confirmation"] is True
+
+
+def test_api_feishu_report_requires_webhook(tmp_path):
+    config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"])
+    client = TestClient(create_app(config_path, longbridge_client=_FakeLongbridge(), auto_intraday=False))
+
+    response = client.post("/api/longbridge-paper/feishu-report")
+
+    assert response.status_code == 400
+    assert "Feishu webhook is empty" in response.json()["detail"]
+
+
+def test_api_feishu_report_sends_account_summary(tmp_path, monkeypatch):
+    config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"], feishu_webhook_url="https://example.test/webhook")
+    sent = {}
+
+    def fake_send(webhook_url, text):
+        sent["webhook_url"] = webhook_url
+        sent["text"] = text
+
+    monkeypatch.setattr("stock_quant.web.api.send_feishu_text", fake_send)
+    config = load_config(config_path)
+    save_auto_trade_state(
+        config,
+        True,
+        account_status={
+            "account_label": "Paper Trading",
+            "account_type_label": "unknown",
+            "is_simulated": True,
+            "requires_confirmation": False,
+        },
+    )
+    client = TestClient(create_app(config_path, longbridge_client=_FakeLongbridge(), auto_intraday=False))
+
+    response = client.post("/api/longbridge-paper/feishu-report")
+
+    assert response.status_code == 200
+    assert response.json()["sent"] is True
+    assert sent["webhook_url"] == "https://example.test/webhook"
+    assert "账户: Paper Trading" in sent["text"]
+    assert "自动交易状态: 开启" in sent["text"]
+    assert "AAPL.US 数量=10" in sent["text"]
+
+
+def _write_web_fixture(tmp_path, intraday_symbols=None, poll_seconds=60, feishu_webhook_url=""):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     cache_dir = tmp_path / "data" / "cache"
@@ -123,6 +215,9 @@ def _write_web_fixture(tmp_path, intraday_symbols=None, poll_seconds=60):
                     "volume_multiplier": 1.5,
                     "symbols": intraday_symbols or [],
                 },
+                "notifications": {
+                    "feishu_webhook_url": feishu_webhook_url,
+                },
                 "factor_weights": {
                     "momentum": 0.3,
                     "value": 0.25,
@@ -141,6 +236,14 @@ def _write_web_fixture(tmp_path, intraday_symbols=None, poll_seconds=60):
 
 
 class _FakeLongbridge:
+    auth_status_payload = {"account": {"account_type": None, "name": "Paper Trading", "account_no": "123456789"}}
+
+    def __init__(self):
+        self.kline_calls = []
+
+    def auth_status(self):
+        return self.auth_status_payload
+
     def watchlist(self):
         return [{"name": "Default", "securities": [{"symbol": "AAPL.US"}]}]
 
@@ -150,7 +253,14 @@ class _FakeLongbridge:
     def quote(self, *symbols):
         return [{"symbol": symbol, "last_done": "104"} for symbol in symbols]
 
+    def assets(self, currency="USD"):
+        return {"currency": currency, "net_assets": "10000", "total_cash": "2000", "buy_power": "3000"}
+
+    def positions(self):
+        return [{"symbol": "AAPL.US", "quantity": "10", "available_quantity": "10", "cost_price": "100", "currency": "USD"}]
+
     def kline(self, symbol, count=500, period="day", session="intraday"):
+        self.kline_calls.append(symbol)
         rows = []
         closes = [100 + index * 0.2 for index in range(12)] + [104.0]
         for index, close in enumerate(closes):

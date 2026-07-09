@@ -33,7 +33,6 @@ import type {
   IntradayAutoTradeState,
   IntradayReport,
   IntradaySignal,
-  IntradayState,
   KlinePoint,
   LongbridgePaperOrderPayload,
   LongbridgePaperSummary,
@@ -43,7 +42,7 @@ import type {
 } from "./types";
 import "./styles.css";
 
-type View = "stock" | "strategy" | "intraday" | "intradayBacktest" | "longbridgePaper";
+type View = "stock" | "strategy" | "intradayBacktest" | "longbridgePaper";
 type AnyRecord = Record<string, unknown>;
 const REPORT_PAGE_SIZE = 20;
 
@@ -64,9 +63,7 @@ function App() {
         ? "intradayBacktest"
         : window.location.pathname.startsWith("/longbridge-paper")
           ? "longbridgePaper"
-          : window.location.pathname.startsWith("/intraday")
-            ? "intraday"
-            : "stock"
+          : "stock"
   );
   const [language, setLanguage] = useState<Language>(() => {
     const saved = window.localStorage.getItem("stock_quant_language");
@@ -79,7 +76,6 @@ function App() {
   const [klines, setKlines] = useState<KlinePoint[]>([]);
   const [rank, setRank] = useState<RankRow[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
-  const [intraday, setIntraday] = useState<IntradayState | null>(null);
   const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
   const [selectedBacktestSymbols, setSelectedBacktestSymbols] = useState<string[]>([]);
   const [paperSummary, setPaperSummary] = useState<LongbridgePaperSummary | null>(null);
@@ -89,7 +85,6 @@ function App() {
   const [paperOperationResult, setPaperOperationResult] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
   const [runningBacktest, setRunningBacktest] = useState(false);
   const [loadingPaper, setLoadingPaper] = useState(false);
   const [submittingPaper, setSubmittingPaper] = useState(false);
@@ -138,16 +133,6 @@ function App() {
   }, [view]);
 
   useEffect(() => {
-    if (view !== "intraday") return;
-    setLoading(true);
-    setError(null);
-    api.intradayState()
-      .then((statePayload) => setIntraday(statePayload))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [view]);
-
-  useEffect(() => {
     if (view !== "intradayBacktest") return;
     setLoading(true);
     setError(null);
@@ -176,9 +161,7 @@ function App() {
     setView(nextView);
     const nextPath = nextView === "strategy"
       ? "/strategy"
-      : nextView === "intraday"
-        ? "/intraday"
-        : nextView === "intradayBacktest"
+      : nextView === "intradayBacktest"
           ? "/intraday-backtest"
           : nextView === "longbridgePaper"
             ? "/longbridge-paper"
@@ -205,19 +188,6 @@ function App() {
       setError(err instanceof Error ? err.message : "Refresh failed");
     } finally {
       setRefreshing(false);
-    }
-  }
-
-  async function evaluateIntraday() {
-    setEvaluating(true);
-    setError(null);
-    try {
-      const payload = await api.intradayEvaluate();
-      setIntraday(payload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Intraday evaluation failed");
-    } finally {
-      setEvaluating(false);
     }
   }
 
@@ -257,10 +227,26 @@ function App() {
   }
 
   async function updateAutoTrade(enabled: boolean) {
+    let confirmNonSimulated = false;
+    if (enabled) {
+      const account = autoTrade?.account;
+      if (!account?.is_simulated) {
+        const accountText = [
+          `账户: ${account?.account_label ?? account?.account_type_label ?? "unknown"}`,
+          `账户类型: ${account?.account_type_label ?? "unknown"}`,
+          `账户渠道: ${account?.account_channel ?? "unknown"}`,
+          `账号: ${account?.account_no_masked ?? "unknown"}`
+        ].join("\n");
+        confirmNonSimulated = window.confirm(
+          `当前 Longbridge CLI 账户不是明确的模拟账户，开启后可能向真实综合账户提交委托。\n\n${accountText}\n\n确认开启实时自动交易？`
+        );
+        if (!confirmNonSimulated) return;
+      }
+    }
     setUpdatingAutoTrade(true);
     setError(null);
     try {
-      const payload = await api.updateIntradayAutoTrade(enabled);
+      const payload = await api.updateIntradayAutoTrade(enabled, confirmNonSimulated);
       setAutoTrade(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update auto trade failed");
@@ -284,6 +270,20 @@ function App() {
       await loadPaperSummary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Longbridge paper order failed");
+    } finally {
+      setSubmittingPaper(false);
+    }
+  }
+
+  async function sendPaperFeishuReport() {
+    setSubmittingPaper(true);
+    setError(null);
+    setPaperOperationResult(null);
+    try {
+      const payload = await api.longbridgePaperFeishuReport();
+      setPaperOperationResult(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Feishu report failed");
     } finally {
       setSubmittingPaper(false);
     }
@@ -313,7 +313,6 @@ function App() {
         <div className="brand"><TrendingUp size={24} /><div><strong>Stock Quant</strong><span>{t.appSubtitle}</span></div></div>
         <button className={view === "stock" ? "nav active" : "nav"} onClick={() => navigate("stock")}><LineChart size={18} />{t.stockAnalysis}</button>
         <button className={view === "strategy" ? "nav active" : "nav"} onClick={() => navigate("strategy")}><BarChart3 size={18} />{t.strategyBacktest}</button>
-        <button className={view === "intraday" ? "nav active" : "nav"} onClick={() => navigate("intraday")}><Zap size={18} />{t.intradayTrading}</button>
         <button className={view === "intradayBacktest" ? "nav active" : "nav"} onClick={() => navigate("intradayBacktest")}><BarChart3 size={18} />{t.intradayBacktest}</button>
         <button className={view === "longbridgePaper" ? "nav active" : "nav"} onClick={() => navigate("longbridgePaper")}><Activity size={18} />{t.longbridgePaper}</button>
         <div className="cache-note"><Database size={16} /><span>{symbols?.cached.length ?? 0} {t.cachedSymbols}</span></div>
@@ -336,7 +335,6 @@ function App() {
         {loading && <div className="loading"><Loader2 className="spin" size={20} /> {t.loadingMarketData}</div>}
         {!loading && view === "stock" && summary && <StockView t={t} summary={summary} klines={klines} rankRow={selectedRank} benchmark={config?.benchmark ?? "SPY.US"} />}
         {!loading && view === "strategy" && backtest && <StrategyView t={t} rank={rank} backtest={backtest} topN={Number(config?.strategy.top_n ?? 10)} />}
-        {!loading && view === "intraday" && intraday && <IntradayView t={t} state={intraday} evaluating={evaluating} onEvaluate={evaluateIntraday} />}
         {!loading && view === "intradayBacktest" && (
           <IntradayBacktestView
             t={t}
@@ -360,6 +358,7 @@ function App() {
             submitting={submittingPaper}
             updatingAutoTrade={updatingAutoTrade}
             onRefresh={loadPaperSummary}
+            onSendFeishuReport={sendPaperFeishuReport}
             onAutoTradeChange={updateAutoTrade}
             onOrderChange={setPaperOrder}
             onSubmitOrder={submitPaperOrder}
@@ -409,22 +408,6 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
   );
 }
 
-function IntradayView({ t, state, evaluating, onEvaluate }: { t: Copy; state: IntradayState; evaluating: boolean; onEvaluate: () => void }) {
-  const positions = Object.values(state.positions);
-  const latestSignals = state.last_signals.slice(-25).reverse();
-  const recentTrades = state.trades.slice(-20).reverse();
-
-  return (
-    <section className="stack">
-      <div className="title-row"><div><p className="eyebrow">{t.intradayTrading}</p><h1>{t.paperPortfolio}</h1></div><button className="text-button wide" onClick={onEvaluate} disabled={evaluating}>{evaluating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{t.evaluateIntraday}</button></div>
-      <div className="metric-grid"><Metric label={t.equity} value={formatNumber(state.equity)} /><Metric label={t.cash} value={formatNumber(state.cash)} /><Metric label={t.dailyLoss} value={formatPercent(state.daily_loss_pct)} /><Metric label={t.dailyStop} value={state.daily_stop ? t.active : t.normal} /></div>
-      <div className="metric-grid compact"><Metric label={t.realizedPnl} value={formatNumber(state.realized_pnl)} /><Metric label={t.unrealizedPnl} value={formatNumber(state.unrealized_pnl)} /><Metric label="Day" value={state.day} /><Metric label={t.startEquity} value={formatNumber(state.day_start_equity)} /></div>
-      <div className="panel table-panel"><div className="panel-header"><h2>{t.latestSignals}</h2><span>{latestSignals.length} {t.symbols}</span></div><SignalTable t={t} signals={latestSignals} /></div>
-      <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.positions}</h2><span>{positions.length} {t.symbols}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.quantity}</th><th>{t.avgPrice}</th><th>{t.lastPrice}</th><th>{t.unrealizedPnl}</th></tr></thead><tbody>{positions.map((position) => <tr key={position.symbol}><td>{position.symbol}</td><td>{position.quantity}</td><td>{formatNumber(position.avg_price)}</td><td>{formatNumber(position.last_price)}</td><td className={signedClass(position.unrealized_pnl)}>{formatNumber(position.unrealized_pnl)}</td></tr>)}</tbody></table></div></div><div className="panel table-panel"><div className="panel-header"><h2>{t.recentTrades}</h2><span>{recentTrades.length}</span></div><TradeTable t={t} trades={recentTrades} /></div></div>
-    </section>
-  );
-}
-
 function IntradayBacktestView({ t, report, configuredSymbols, selectedSymbols, onSelectedSymbolsChange, runningBacktest, onRunBacktest }: { t: Copy; report: IntradayReport | null; configuredSymbols: string[]; selectedSymbols: string[]; onSelectedSymbolsChange: (symbols: string[]) => void; runningBacktest: boolean; onRunBacktest: () => void }) {
   return (
     <section className="stack">
@@ -463,7 +446,7 @@ function BacktestSymbolFilter({ t, symbols, selectedSymbols, onChange }: { t: Co
   );
 }
 
-function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, operationResult, loading, submitting, updatingAutoTrade, onRefresh, onAutoTradeChange, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; autoTrade: IntradayAutoTradeState | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; updatingAutoTrade: boolean; onRefresh: () => void; onAutoTradeChange: (enabled: boolean) => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
+function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, operationResult, loading, submitting, updatingAutoTrade, onRefresh, onSendFeishuReport, onAutoTradeChange, onOrderChange, onSubmitOrder, onCancelOrderIdChange, onCancelOrder }: { t: Copy; summary: LongbridgePaperSummary | null; autoTrade: IntradayAutoTradeState | null; order: LongbridgePaperOrderPayload; cancelOrderId: string; operationResult: unknown; loading: boolean; submitting: boolean; updatingAutoTrade: boolean; onRefresh: () => void; onSendFeishuReport: () => void; onAutoTradeChange: (enabled: boolean) => void; onOrderChange: (order: LongbridgePaperOrderPayload) => void; onSubmitOrder: () => void; onCancelOrderIdChange: (value: string) => void; onCancelOrder: () => void }) {
   const account = unwrapPaperPayload(summary?.account);
   const positions = rowsFromPayload(unwrapPaperPayload(summary?.positions));
   const orders = rowsFromPayload(unwrapPaperPayload(summary?.orders));
@@ -473,7 +456,7 @@ function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, oper
 
   return (
     <section className="stack">
-      <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div>
+      <div className="title-row"><div><p className="eyebrow">{t.longbridgePaper}</p><h1>{t.paperTradingConsole}</h1></div><div className="topbar-actions"><button className="text-button wide" onClick={onSendFeishuReport} disabled={submitting}>{submitting ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}飞书报告</button><button className="text-button wide" onClick={onRefresh} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}{t.refreshPaper}</button></div></div>
       <div className="alert">{t.paperTradingRiskNote}</div>
       <AutoTradeSwitch state={autoTrade} updating={updatingAutoTrade} onChange={onAutoTradeChange} />
       <PaperAccountPanel metrics={accountMetrics} raw={summary?.account} />
@@ -507,11 +490,12 @@ function LongbridgePaperView({ t, summary, autoTrade, order, cancelOrderId, oper
 
 function AutoTradeSwitch({ state, updating, onChange }: { state: IntradayAutoTradeState | null; updating: boolean; onChange: (enabled: boolean) => void }) {
   const enabled = Boolean(state?.enabled);
+  const account = state?.account;
   return (
     <div className="panel">
       <div className="panel-header"><h2>盘中自动交易</h2><span>{enabled ? "已开启" : "已关闭"}</span></div>
-      <p className="muted">开启后，日内交易轮询在开盘期间遇到 BUY / SELL 信号，会自动向当前 Longbridge CLI 模拟账户提交买卖委托；关闭时只生成信号，不下单。</p>
-      <div className="metric-grid compact"><Metric label="状态" value={enabled ? "开启" : "关闭"} /><Metric label="模式" value={state?.mode ?? "longbridge_paper"} /><Metric label="更新时间" value={formatDateTime(state?.updated_at)} /></div>
+      <p className="muted">开启后，后台轮询会在开盘期间每分钟拉取 5m K 线并在 BUY / SELL 信号出现时提交委托；关闭时后台不拉取 5m K 线。</p>
+      <div className="metric-grid compact"><Metric label="状态" value={enabled ? "开启" : "关闭"} /><Metric label="模式" value={state?.mode ?? "longbridge_paper"} /><Metric label="账户" value={account?.account_label ?? account?.account_type_label ?? "unknown"} /><Metric label="账号" value={account?.account_no_masked ?? "unknown"} /><Metric label="更新时间" value={formatDateTime(state?.updated_at)} /></div>
       <button className="text-button wide" onClick={() => onChange(!enabled)} disabled={updating}>{updating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{enabled ? "关闭自动交易" : "开启自动交易"}</button>
     </div>
   );

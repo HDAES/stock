@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from stock_quant.account_report import build_account_report, format_feishu_account_report, send_feishu_text
 from stock_quant.analysis import (
     CacheMissError,
     app_config_payload,
@@ -24,7 +25,12 @@ from stock_quant.analysis import (
     strategy_rank,
 )
 from stock_quant.cache import DataCache
-from stock_quant.intraday_auto_trade import load_auto_trade_state, save_auto_trade_state
+from stock_quant.intraday_auto_trade import (
+    detect_longbridge_account_status,
+    format_account_status,
+    load_auto_trade_state,
+    save_auto_trade_state,
+)
 from stock_quant.intraday_backtest import intraday_backtest, load_intraday_history
 from stock_quant.intraday_data import ensure_intraday_history_for_today, resolve_intraday_backtest_symbols
 from stock_quant.intraday_report import read_intraday_report, write_intraday_report
@@ -49,6 +55,7 @@ class PaperCancelPayload(BaseModel):
 
 class AutoTradePayload(BaseModel):
     enabled: bool
+    confirm_non_simulated: bool = False
 
 
 def create_app(
@@ -68,6 +75,10 @@ def create_app(
     def get_paper_client() -> LongbridgePaperTradingClient:
         return LongbridgePaperTradingClient(get_longbridge() or LongbridgeClient())
 
+    def intraday_auto_scan_enabled() -> bool:
+        config = get_config()
+        return bool(config.intraday.enabled and load_auto_trade_state(config).get("enabled"))
+
     intraday_task: asyncio.Task | None = None
 
     async def intraday_background_loop() -> None:
@@ -77,20 +88,26 @@ def create_app(
             print(f"[intraday] next scan in {wait_seconds}s", flush=True)
             await asyncio.sleep(wait_seconds)
             config = get_config()
-            if config.intraday.enabled and intraday_market_open(get_longbridge()):
+            if not config.intraday.enabled:
+                print("[intraday] intraday disabled, skipping scan", flush=True)
+                continue
+            if not load_auto_trade_state(config).get("enabled"):
+                print("[intraday] auto trade disabled, skipping background kline scan", flush=True)
+                continue
+            if intraday_market_open(get_longbridge()):
                 await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), print)
             else:
-                print("[intraday] market closed or intraday disabled, skipping scan", flush=True)
+                print("[intraday] market closed, skipping scan", flush=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         nonlocal intraday_task
         if auto_intraday and intraday_task is None:
             config = get_config()
-            if config.intraday.enabled and intraday_market_open(get_longbridge()):
+            if intraday_auto_scan_enabled() and intraday_market_open(get_longbridge()):
                 await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), print)
             else:
-                print("[intraday] startup scan skipped: market closed or intraday disabled", flush=True)
+                print("[intraday] startup scan skipped: intraday disabled, auto trade disabled, or market closed", flush=True)
             intraday_task = asyncio.create_task(intraday_background_loop())
         try:
             yield
@@ -178,11 +195,67 @@ def create_app(
 
     @app.get("/api/intraday/auto-trade")
     def read_intraday_auto_trade() -> dict[str, Any]:
-        return load_auto_trade_state(get_config())
+        config = get_config()
+        state = load_auto_trade_state(config)
+        account_status = detect_longbridge_account_status(
+            get_longbridge() or LongbridgeClient(),
+            configured_label=config.longbridge_account.account_label,
+            configured_is_simulated=config.longbridge_account.is_simulated_account,
+        )
+        print(f"[auto-trade] current account {format_account_status(account_status)}", flush=True)
+        return {**state, "account": account_status}
 
     @app.post("/api/intraday/auto-trade")
     def update_intraday_auto_trade(payload: AutoTradePayload) -> dict[str, Any]:
-        return save_auto_trade_state(get_config(), payload.enabled)
+        config = get_config()
+        account_status = detect_longbridge_account_status(
+            get_longbridge() or LongbridgeClient(),
+            configured_label=config.longbridge_account.account_label,
+            configured_is_simulated=config.longbridge_account.is_simulated_account,
+        )
+        print(f"[auto-trade] current account {format_account_status(account_status)}", flush=True)
+        if payload.enabled and account_status["requires_confirmation"] and not payload.confirm_non_simulated:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "当前 Longbridge CLI 账户不是明确的模拟账户，或账户类型未知。"
+                    "开启实时自动交易前需要确认非模拟账户风险。"
+                ),
+            )
+        return save_auto_trade_state(
+            config,
+            payload.enabled,
+            account_status=account_status,
+            confirmed_non_simulated=payload.enabled and payload.confirm_non_simulated,
+        )
+
+    @app.post("/api/longbridge-paper/feishu-report")
+    def send_longbridge_paper_feishu_report() -> dict[str, Any]:
+        config = get_config()
+        webhook_url = config.notifications.feishu_webhook_url.strip()
+        if not webhook_url:
+            raise HTTPException(status_code=400, detail="Feishu webhook is empty in config.notifications.feishu_webhook_url")
+        longbridge = get_longbridge() or LongbridgeClient()
+        account_status = detect_longbridge_account_status(
+            longbridge,
+            configured_label=config.longbridge_account.account_label,
+            configured_is_simulated=config.longbridge_account.is_simulated_account,
+        )
+        auto_trade_state = load_auto_trade_state(config)
+        try:
+            report = build_account_report(longbridge)
+            text = format_feishu_account_report(report, account_status, auto_trade_state)
+            send_feishu_text(webhook_url, text)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Feishu account report failed: {exc}") from exc
+        return {
+            "sent": True,
+            "position_count": report["position_count"],
+            "holding_market_value": report["holding_market_value"],
+            "total_quantity": report["total_quantity"],
+            "auto_trade_enabled": bool(auto_trade_state.get("enabled")),
+            "account": account_status,
+        }
 
     @app.get("/api/intraday/report")
     def read_intraday_backtest_report(

@@ -53,6 +53,7 @@
     "data_dir": "data/intraday/kline",
     "commission_bps": 1,
     "slippage_bps": 3,
+    "order_timeout_seconds": 120,
     "symbols": [
       "AAPL.US",
       "NVDA.US",
@@ -64,6 +65,13 @@
       "AMD.US",
       "META.US"
     ]
+  },
+  "notifications": {
+    "feishu_webhook_url": "https://open.larksuite.com/open-apis/bot/v2/hook/c758eebd-0536-4cf2-a1e6-c46a48eb1557"
+  },
+  "longbridge_account": {
+    "account_label": "Paper Trading",
+    "is_simulated_account": true
   },
   "factor_weights": {
     "momentum": 0.3,

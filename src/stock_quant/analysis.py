@@ -19,9 +19,10 @@ from .intraday import (
     market_is_open,
     normalize_intraday_kline,
 )
-from .intraday_auto_trade import maybe_execute_auto_trade
+from .intraday_auto_trade import broker_positions, load_auto_trade_state, maybe_execute_auto_trade, reconcile_auto_trade_orders
 from .intraday_data import configured_intraday_symbols, merge_intraday_history
 from .longbridge import LongbridgeClient
+from .longbridge_paper import LongbridgePaperTradingClient
 from .paper import PaperPortfolio
 from .strategy import equal_weight_targets, market_exposure, select_top_symbols
 
@@ -211,6 +212,16 @@ def evaluate_intraday(
     portfolio.refresh_daily_stop(config.intraday.max_daily_loss_pct)
     if portfolio.daily_stop:
         _log_intraday(logger, f"daily loss guard active ({portfolio.daily_loss_pct():.2%})")
+    auto_trade_enabled = bool(load_auto_trade_state(config).get("enabled"))
+    broker_position_map = {}
+    if auto_trade_enabled:
+        paper_client = LongbridgePaperTradingClient(longbridge)
+        reconcile_auto_trade_orders(config, paper_client, logger)
+        try:
+            broker_position_map = broker_positions(paper_client)
+            _log_intraday(logger, f"loaded {len(broker_position_map)} Longbridge paper positions")
+        except Exception as exc:
+            _log_intraday(logger, f"Longbridge paper positions unavailable: {exc}")
 
     signals: list[dict[str, Any]] = []
     mark_prices: dict[str, float] = {}
@@ -279,13 +290,15 @@ def evaluate_intraday(
             _log_intraday(logger, f"{symbol} HOLD bar_already_processed bar={bar_id}")
             continue
 
-        position = portfolio.positions.get(symbol)
+        broker_position = broker_position_map.get(symbol)
+        has_position = broker_position is not None and broker_position.quantity > 0
+        entry_price = broker_position.avg_price if broker_position else None
         signal = evaluate_trend_signal(
             symbol=symbol,
             frame=frame,
             config=config.intraday,
-            has_position=position is not None,
-            entry_price=position.avg_price if position else None,
+            has_position=has_position,
+            entry_price=entry_price,
             daily_stop=portfolio.daily_stop,
             market_open=market_open,
         ).to_dict()
@@ -295,31 +308,12 @@ def evaluate_intraday(
             signal["execution_price"] = trade_price
             mark_prices[symbol] = float(trade_price)
 
-        if signal["action"] == "BUY" and trade_price is not None:
-            trade = portfolio.buy(
-                symbol,
-                float(trade_price),
-                str(signal["timestamp"] or datetime.now().isoformat(timespec="seconds")),
-                config.intraday.max_position_pct,
-                str(signal["reason"]),
-            )
-            signal["trade"] = trade
-        elif signal["action"] == "SELL" and trade_price is not None:
-            trade = portfolio.sell(
-                symbol,
-                float(trade_price),
-                str(signal["timestamp"] or datetime.now().isoformat(timespec="seconds")),
-                str(signal["reason"]),
-            )
-            signal["trade"] = trade
-
-        trade_payload = signal.get("trade")
-        if isinstance(trade_payload, dict):
+        if auto_trade_enabled and signal["action"] in {"BUY", "SELL"}:
             signal["longbridge_order"] = maybe_execute_auto_trade(
                 config,
                 longbridge,
                 signal,
-                trade_payload,
+                None,
                 logger,
             )
 
