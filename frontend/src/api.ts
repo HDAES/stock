@@ -3,7 +3,6 @@ import type {
   BacktestResult,
   IntradayAutoTradeState,
   IntradayReport,
-  IntradayState,
   KlinePoint,
   LongbridgePaperOrderPayload,
   LongbridgePaperSummary,
@@ -50,10 +49,8 @@ export const api = {
     ),
   rank: () => request<RankRow[]>("/api/strategy/rank"),
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
-  intradayState: () => request<IntradayState>("/api/intraday/state"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
   intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
-  intradayEvaluate: () => request<IntradayState>("/api/intraday/evaluate", { method: "POST" }),
   intradayAutoTrade: () => request<IntradayAutoTradeState>("/api/intraday/auto-trade"),
   updateIntradayAutoTrade: (enabled: boolean) =>
     request<IntradayAutoTradeState>("/api/intraday/auto-trade", {

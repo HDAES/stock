@@ -290,10 +290,9 @@ def evaluate_intraday(
             _log_intraday(logger, f"{symbol} HOLD bar_already_processed bar={bar_id}")
             continue
 
-        shadow_position = portfolio.positions.get(symbol)
         broker_position = broker_position_map.get(symbol)
-        has_position = broker_position is not None and broker_position.quantity > 0 if auto_trade_enabled else shadow_position is not None
-        entry_price = broker_position.avg_price if auto_trade_enabled and broker_position else shadow_position.avg_price if shadow_position else None
+        has_position = broker_position is not None and broker_position.quantity > 0
+        entry_price = broker_position.avg_price if broker_position else None
         signal = evaluate_trend_signal(
             symbol=symbol,
             frame=frame,
@@ -317,45 +316,6 @@ def evaluate_intraday(
                 None,
                 logger,
             )
-            auto_trade = signal.get("longbridge_order")
-            if isinstance(auto_trade, dict) and auto_trade.get("submitted") and trade_price is not None:
-                timestamp = str(signal["timestamp"] or datetime.now().isoformat(timespec="seconds"))
-                quantity = _safe_int(auto_trade.get("quantity"))
-                if quantity is not None and signal["action"] == "BUY":
-                    signal["trade"] = portfolio.record_buy(
-                        symbol,
-                        quantity,
-                        float(trade_price),
-                        timestamp,
-                        str(signal["reason"]),
-                        source="longbridge_shadow",
-                    )
-                elif quantity is not None and signal["action"] == "SELL":
-                    signal["trade"] = portfolio.record_sell(
-                        symbol,
-                        quantity,
-                        float(trade_price),
-                        timestamp,
-                        str(signal["reason"]),
-                        source="longbridge_shadow",
-                    )
-        elif signal["action"] == "BUY" and trade_price is not None:
-            trade = portfolio.buy(
-                symbol,
-                float(trade_price),
-                str(signal["timestamp"] or datetime.now().isoformat(timespec="seconds")),
-                config.intraday.max_position_pct,
-                str(signal["reason"]),
-            )
-            signal["trade"] = trade
-        elif signal["action"] == "SELL" and trade_price is not None:
-            trade = portfolio.sell(
-                symbol,
-                float(trade_price),
-                str(signal["timestamp"] or datetime.now().isoformat(timespec="seconds")),
-                str(signal["reason"]),
-            )
-            signal["trade"] = trade
 
         portfolio.processed_intraday_bars[symbol] = bar_id
         executable_signals.append(signal)
@@ -441,13 +401,6 @@ def _safe_float(value: Any) -> float | None:
     if math.isnan(number) or math.isinf(number):
         return None
     return number
-
-
-def _safe_int(value: Any) -> int | None:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
 
 
 def _completed_intraday_frame(frame: pd.DataFrame, period: str) -> pd.DataFrame:

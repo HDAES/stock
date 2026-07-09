@@ -33,7 +33,6 @@ import type {
   IntradayAutoTradeState,
   IntradayReport,
   IntradaySignal,
-  IntradayState,
   KlinePoint,
   LongbridgePaperOrderPayload,
   LongbridgePaperSummary,
@@ -43,7 +42,7 @@ import type {
 } from "./types";
 import "./styles.css";
 
-type View = "stock" | "strategy" | "intraday" | "intradayBacktest" | "longbridgePaper";
+type View = "stock" | "strategy" | "intradayBacktest" | "longbridgePaper";
 type AnyRecord = Record<string, unknown>;
 const REPORT_PAGE_SIZE = 20;
 
@@ -64,9 +63,7 @@ function App() {
         ? "intradayBacktest"
         : window.location.pathname.startsWith("/longbridge-paper")
           ? "longbridgePaper"
-          : window.location.pathname.startsWith("/intraday")
-            ? "intraday"
-            : "stock"
+          : "stock"
   );
   const [language, setLanguage] = useState<Language>(() => {
     const saved = window.localStorage.getItem("stock_quant_language");
@@ -79,7 +76,6 @@ function App() {
   const [klines, setKlines] = useState<KlinePoint[]>([]);
   const [rank, setRank] = useState<RankRow[]>([]);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
-  const [intraday, setIntraday] = useState<IntradayState | null>(null);
   const [intradayReport, setIntradayReport] = useState<IntradayReport | null>(null);
   const [selectedBacktestSymbols, setSelectedBacktestSymbols] = useState<string[]>([]);
   const [paperSummary, setPaperSummary] = useState<LongbridgePaperSummary | null>(null);
@@ -89,7 +85,6 @@ function App() {
   const [paperOperationResult, setPaperOperationResult] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [evaluating, setEvaluating] = useState(false);
   const [runningBacktest, setRunningBacktest] = useState(false);
   const [loadingPaper, setLoadingPaper] = useState(false);
   const [submittingPaper, setSubmittingPaper] = useState(false);
@@ -138,16 +133,6 @@ function App() {
   }, [view]);
 
   useEffect(() => {
-    if (view !== "intraday") return;
-    setLoading(true);
-    setError(null);
-    api.intradayState()
-      .then((statePayload) => setIntraday(statePayload))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [view]);
-
-  useEffect(() => {
     if (view !== "intradayBacktest") return;
     setLoading(true);
     setError(null);
@@ -176,9 +161,7 @@ function App() {
     setView(nextView);
     const nextPath = nextView === "strategy"
       ? "/strategy"
-      : nextView === "intraday"
-        ? "/intraday"
-        : nextView === "intradayBacktest"
+      : nextView === "intradayBacktest"
           ? "/intraday-backtest"
           : nextView === "longbridgePaper"
             ? "/longbridge-paper"
@@ -205,19 +188,6 @@ function App() {
       setError(err instanceof Error ? err.message : "Refresh failed");
     } finally {
       setRefreshing(false);
-    }
-  }
-
-  async function evaluateIntraday() {
-    setEvaluating(true);
-    setError(null);
-    try {
-      const payload = await api.intradayEvaluate();
-      setIntraday(payload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Intraday evaluation failed");
-    } finally {
-      setEvaluating(false);
     }
   }
 
@@ -313,7 +283,6 @@ function App() {
         <div className="brand"><TrendingUp size={24} /><div><strong>Stock Quant</strong><span>{t.appSubtitle}</span></div></div>
         <button className={view === "stock" ? "nav active" : "nav"} onClick={() => navigate("stock")}><LineChart size={18} />{t.stockAnalysis}</button>
         <button className={view === "strategy" ? "nav active" : "nav"} onClick={() => navigate("strategy")}><BarChart3 size={18} />{t.strategyBacktest}</button>
-        <button className={view === "intraday" ? "nav active" : "nav"} onClick={() => navigate("intraday")}><Zap size={18} />{t.intradayTrading}</button>
         <button className={view === "intradayBacktest" ? "nav active" : "nav"} onClick={() => navigate("intradayBacktest")}><BarChart3 size={18} />{t.intradayBacktest}</button>
         <button className={view === "longbridgePaper" ? "nav active" : "nav"} onClick={() => navigate("longbridgePaper")}><Activity size={18} />{t.longbridgePaper}</button>
         <div className="cache-note"><Database size={16} /><span>{symbols?.cached.length ?? 0} {t.cachedSymbols}</span></div>
@@ -336,7 +305,6 @@ function App() {
         {loading && <div className="loading"><Loader2 className="spin" size={20} /> {t.loadingMarketData}</div>}
         {!loading && view === "stock" && summary && <StockView t={t} summary={summary} klines={klines} rankRow={selectedRank} benchmark={config?.benchmark ?? "SPY.US"} />}
         {!loading && view === "strategy" && backtest && <StrategyView t={t} rank={rank} backtest={backtest} topN={Number(config?.strategy.top_n ?? 10)} />}
-        {!loading && view === "intraday" && intraday && <IntradayView t={t} state={intraday} evaluating={evaluating} onEvaluate={evaluateIntraday} />}
         {!loading && view === "intradayBacktest" && (
           <IntradayBacktestView
             t={t}
@@ -405,22 +373,6 @@ function StrategyView({ t, rank, backtest, topN }: { t: Copy; rank: RankRow[]; b
       <div className="panel chart-panel"><div className="panel-header"><h2>{t.equityCurve}</h2><span>{t.currentCachedWindowBacktest}</span></div><ResponsiveContainer width="100%" height={360}><AreaChart data={backtest.equity_curve}><defs><linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} /><stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="date" minTickGap={32} /><YAxis domain={["auto", "auto"]} /><Tooltip formatter={(value) => formatNumber(Number(value), 4)} /><Area type="monotone" dataKey="equity" stroke="#2563eb" fill="url(#equityFill)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div>
       <div className="two-column"><div className="panel"><div className="panel-header"><h2>{t.targetWeights}</h2><span>Top {topN} {t.topSelectedSymbols}</span></div><ResponsiveContainer width="100%" height={300}><BarChart data={weights} layout="vertical" margin={{ left: 20 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} /><YAxis type="category" dataKey="symbol" width={78} /><Tooltip formatter={(value) => formatPercent(Number(value))} /><Bar dataKey="weight" fill="#0f766e" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div><div className="panel"><div className="panel-header"><h2>{t.selectedSymbols}</h2><span>{t.currentFactorWinners}</span></div><div className="symbol-chips">{backtest.selected_symbols.map((selected) => <span key={selected}>{selected}</span>)}</div></div></div>
       <div className="panel table-panel"><div className="panel-header"><h2>{t.factorRanking}</h2><span>{rank.length} {t.symbols}</span></div><div className="table-scroll"><table><thead><tr><th>{t.rank}</th><th>{t.symbol}</th><th>{t.score}</th><th>{t.momentum}</th><th>{t.value}</th><th>{t.quality}</th><th>{t.lowVol}</th></tr></thead><tbody>{rank.map((row) => <tr key={row.symbol}><td>{row.rank}</td><td>{row.symbol}</td><td>{formatNumber(row.score, 4)}</td><td>{formatPercent(row.momentum)}</td><td>{formatNumber(row.value, 4)}</td><td>{formatNumber(row.quality, 4)}</td><td>{formatNumber(row.low_volatility, 4)}</td></tr>)}</tbody></table></div></div>
-    </section>
-  );
-}
-
-function IntradayView({ t, state, evaluating, onEvaluate }: { t: Copy; state: IntradayState; evaluating: boolean; onEvaluate: () => void }) {
-  const positions = Object.values(state.positions);
-  const latestSignals = state.last_signals.slice(-25).reverse();
-  const recentTrades = state.trades.slice(-20).reverse();
-
-  return (
-    <section className="stack">
-      <div className="title-row"><div><p className="eyebrow">{t.intradayTrading}</p><h1>{t.paperPortfolio}</h1></div><button className="text-button wide" onClick={onEvaluate} disabled={evaluating}>{evaluating ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}{t.evaluateIntraday}</button></div>
-      <div className="metric-grid"><Metric label={t.equity} value={formatNumber(state.equity)} /><Metric label={t.cash} value={formatNumber(state.cash)} /><Metric label={t.dailyLoss} value={formatPercent(state.daily_loss_pct)} /><Metric label={t.dailyStop} value={state.daily_stop ? t.active : t.normal} /></div>
-      <div className="metric-grid compact"><Metric label={t.realizedPnl} value={formatNumber(state.realized_pnl)} /><Metric label={t.unrealizedPnl} value={formatNumber(state.unrealized_pnl)} /><Metric label="Day" value={state.day} /><Metric label={t.startEquity} value={formatNumber(state.day_start_equity)} /></div>
-      <div className="panel table-panel"><div className="panel-header"><h2>{t.latestSignals}</h2><span>{latestSignals.length} {t.symbols}</span></div><SignalTable t={t} signals={latestSignals} /></div>
-      <div className="two-column"><div className="panel table-panel"><div className="panel-header"><h2>{t.positions}</h2><span>{positions.length} {t.symbols}</span></div><div className="table-scroll"><table className="compact-table"><thead><tr><th>{t.symbol}</th><th>{t.quantity}</th><th>{t.avgPrice}</th><th>{t.lastPrice}</th><th>{t.unrealizedPnl}</th></tr></thead><tbody>{positions.map((position) => <tr key={position.symbol}><td>{position.symbol}</td><td>{position.quantity}</td><td>{formatNumber(position.avg_price)}</td><td>{formatNumber(position.last_price)}</td><td className={signedClass(position.unrealized_pnl)}>{formatNumber(position.unrealized_pnl)}</td></tr>)}</tbody></table></div></div><div className="panel table-panel"><div className="panel-header"><h2>{t.recentTrades}</h2><span>{recentTrades.length}</span></div><TradeTable t={t} trades={recentTrades} /></div></div>
     </section>
   );
 }

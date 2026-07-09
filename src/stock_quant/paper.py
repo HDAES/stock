@@ -150,39 +150,6 @@ class PaperPortfolio:
         self.trades.append(trade)
         return trade
 
-    def record_buy(
-        self,
-        symbol: str,
-        quantity: int,
-        price: float,
-        timestamp: str,
-        reason: str,
-        source: str = "shadow",
-    ) -> dict[str, Any] | None:
-        if symbol in self.positions or price <= 0 or quantity < 1:
-            return None
-        cost = quantity * price
-        self.cash -= cost
-        self.positions[symbol] = Position(
-            symbol=symbol,
-            quantity=quantity,
-            avg_price=price,
-            entry_time=timestamp,
-            last_price=price,
-        )
-        trade = {
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "side": "BUY",
-            "quantity": quantity,
-            "price": price,
-            "value": cost,
-            "reason": reason,
-            "source": source,
-        }
-        self.trades.append(trade)
-        return trade
-
     def sell(self, symbol: str, price: float, timestamp: str, reason: str) -> dict[str, Any] | None:
         position = self.positions.pop(symbol, None)
         if position is None or price <= 0:
@@ -201,39 +168,6 @@ class PaperPortfolio:
             "realized_pnl": pnl,
             "reason": reason,
         }
-        self.trades.append(trade)
-        return trade
-
-    def record_sell(
-        self,
-        symbol: str,
-        quantity: int,
-        price: float,
-        timestamp: str,
-        reason: str,
-        source: str = "shadow",
-    ) -> dict[str, Any] | None:
-        if price <= 0 or quantity < 1:
-            return None
-        position = self.positions.pop(symbol, None)
-        proceeds = quantity * price
-        pnl = None
-        if position is not None:
-            pnl = (price - position.avg_price) * min(quantity, position.quantity)
-            self.realized_pnl += pnl
-        self.cash += proceeds
-        trade = {
-            "timestamp": timestamp,
-            "symbol": symbol,
-            "side": "SELL",
-            "quantity": quantity,
-            "price": price,
-            "value": proceeds,
-            "reason": reason,
-            "source": source,
-        }
-        if pnl is not None:
-            trade["realized_pnl"] = pnl
         self.trades.append(trade)
         return trade
 

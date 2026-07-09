@@ -70,7 +70,7 @@ def test_api_intraday_evaluate_uses_fake_longbridge_client(tmp_path):
 
     assert response.status_code == 200
     data = response.json()
-    assert "AAPL.US" in data["positions"]
+    assert data["positions"] == {}
     assert data["last_signals"][0]["action"] == "BUY"
 
 
@@ -81,7 +81,7 @@ def test_api_startup_auto_scans_intraday_when_market_open(tmp_path):
 
     assert response.status_code == 200
     data = response.json()
-    assert "AAPL.US" in data["positions"]
+    assert data["positions"] == {}
     assert data["last_signals"][0]["action"] == "BUY"
 
 
