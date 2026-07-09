@@ -67,7 +67,7 @@
     ]
   },
   "notifications": {
-    "feishu_webhook_url": "https://open.larksuite.com/open-apis/bot/v2/hook/c758eebd-0536-4cf2-a1e6-c46a48eb1557"
+    "feishu_webhook_url": "${FEISHU_WEBHOOK_URL}"
   },
   "longbridge_account": {
     "account_label": "Paper Trading",
