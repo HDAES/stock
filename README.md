@@ -12,6 +12,20 @@ The initial strategy is a monthly S&P 500 multi-factor rotation:
 
 This project is research-only. It does not place live orders.
 
+> [!WARNING]
+> **当前旧交易模块不得用于真实账户自动交易。**
+>
+> Phase 0 freezes the legacy trading implementation in `READ_ONLY` mode while
+> `trading-core-v2` is under development. Account, position, order, execution,
+> market-data, strategy, report, and backtest reads remain available. Legacy
+> order submission, cancellation, and auto-trade enabling are blocked.
+>
+> The frozen entry points include `intraday_auto_trade.py`,
+> `POST /api/longbridge-paper/order`, `POST /api/longbridge-paper/cancel`, and
+> `POST /api/intraday/auto-trade`. A stale enabled state is rewritten as disabled
+> when the application starts, so restarting the service cannot restore legacy
+> auto trading.
+
 ## Setup
 
 ```bash

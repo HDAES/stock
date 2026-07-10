@@ -63,8 +63,9 @@ def test_auto_trade_state_defaults_to_disabled(tmp_path: Path) -> None:
     state = load_auto_trade_state(config)
 
     assert state["enabled"] is False
-    assert state["mode"] == "longbridge_paper"
+    assert state["mode"] == "READ_ONLY"
     assert state["confirmed_non_simulated"] is False
+    assert state["read_only"] is True
 
 
 def test_detect_longbridge_account_status_masks_and_classifies_account() -> None:
@@ -96,10 +97,34 @@ def test_detect_longbridge_account_status_uses_config_when_cli_account_is_empty(
     assert status["source"] == "config"
 
 
-def test_auto_trade_blocks_unknown_account_without_confirmation(tmp_path: Path) -> None:
+def test_auto_trade_remains_frozen_for_unknown_account(tmp_path: Path) -> None:
     config = _config(tmp_path)
-    save_auto_trade_state(config, True)
+    state = save_auto_trade_state(config, True)
     client = FakeLongbridgeClient()
+
+    result = maybe_execute_auto_trade(
+        config,
+        client,  # type: ignore[arg-type]
+        {
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "execution_price": 100.123,
+            "timestamp": "2026-01-01T09:35:00",
+            "bar_id": "2026-01-01T09:30:00",
+        },
+    )
+
+    assert state["enabled"] is False
+    assert result["submitted"] is False
+    assert result["reason"] == "legacy_trading_frozen_for_trading_core_v2"
+    assert all(call[0][:2] != ["order", "buy"] for call in client.calls)
+
+
+def test_auto_trade_does_not_submit_longbridge_buy_when_enable_requested(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    client = FakeLongbridgeClient()
+    save_auto_trade_state(config, True, account_status=detect_longbridge_account_status(client))  # type: ignore[arg-type]
+    client.calls.clear()
 
     result = maybe_execute_auto_trade(
         config,
@@ -114,42 +139,18 @@ def test_auto_trade_blocks_unknown_account_without_confirmation(tmp_path: Path) 
     )
 
     assert result["submitted"] is False
-    assert result["reason"] == "account_confirmation_required"
-    assert all(call[0][:2] != ["order", "buy"] for call in client.calls)
+    assert result["mode"] == "READ_ONLY"
+    assert result["reason"] == "legacy_trading_frozen_for_trading_core_v2"
+    assert client.calls == []
+    assert load_auto_trade_orders(config) == []
 
 
-def test_auto_trade_submits_longbridge_buy_from_broker_account_when_enabled(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    client = FakeLongbridgeClient()
-    save_auto_trade_state(config, True, account_status=detect_longbridge_account_status(client))  # type: ignore[arg-type]
-
-    result = maybe_execute_auto_trade(
-        config,
-        client,  # type: ignore[arg-type]
-        {
-            "symbol": "AAPL.US",
-            "action": "BUY",
-            "execution_price": 100.123,
-            "timestamp": "2026-01-01T09:35:00",
-            "bar_id": "2026-01-01T09:30:00",
-        },
-    )
-
-    assert result["submitted"] is True
-    assert result["quantity"] == 1
-    assert client.calls[-1][0] == ["order", "buy", "AAPL.US", "1", "--price", "100.12"]
-    assert client.calls[-1][1] == "y\n"
-    orders = load_auto_trade_orders(config)
-    assert orders[0]["order_id"] == "1"
-    assert orders[0]["status"] == "pending"
-    assert orders[0]["symbol"] == "AAPL.US"
-
-
-def test_auto_trade_submits_longbridge_sell_from_broker_position(tmp_path: Path) -> None:
+def test_auto_trade_does_not_submit_longbridge_sell_when_enable_requested(tmp_path: Path) -> None:
     config = _config(tmp_path)
     client = FakeLongbridgeClient()
     save_auto_trade_state(config, True, account_status=detect_longbridge_account_status(client))  # type: ignore[arg-type]
     client.positions_payload = [{"symbol": "AAPL.US", "quantity": "7", "avg_price": "101"}]
+    client.calls.clear()
 
     result = maybe_execute_auto_trade(
         config,
@@ -163,12 +164,13 @@ def test_auto_trade_submits_longbridge_sell_from_broker_position(tmp_path: Path)
         },
     )
 
-    assert result["submitted"] is True
-    assert result["quantity"] == 7
-    assert client.calls[-1][0] == ["order", "sell", "AAPL.US", "7", "--price", "99.99"]
+    assert result["submitted"] is False
+    assert result["mode"] == "READ_ONLY"
+    assert result["reason"] == "legacy_trading_frozen_for_trading_core_v2"
+    assert client.calls == []
 
 
-def test_reconcile_auto_trade_orders_cancels_stale_pending_order(tmp_path: Path) -> None:
+def test_reconcile_auto_trade_orders_cannot_cancel_stale_pending_order(tmp_path: Path) -> None:
     config = _config(tmp_path)
     client = FakeLongbridgeClient()
     submitted_at = (datetime.now() - timedelta(seconds=300)).isoformat(timespec="seconds")
@@ -190,9 +192,11 @@ def test_reconcile_auto_trade_orders_cancels_stale_pending_order(tmp_path: Path)
 
     records = reconcile_auto_trade_orders(config, LongbridgePaperTradingClient(client))  # type: ignore[arg-type]
 
-    assert records[0]["status"] == "cancel_requested"
-    assert any(call[0][:2] == ["order", "cancel"] for call in client.calls)
-    assert json.loads(auto_trade_orders_path(config).read_text())[0]["status"] == "cancel_requested"
+    assert records[0]["status"] == "cancel_failed"
+    assert "READ_ONLY" in records[0]["cancel_error"]
+    assert not any(call[0][:2] == ["order", "cancel"] for call in client.calls)
+    persisted = json.loads(auto_trade_orders_path(config).read_text())
+    assert persisted[0]["status"] == "cancel_failed"
 
 
 def _config(tmp_path: Path) -> AppConfig:
