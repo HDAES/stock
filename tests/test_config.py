@@ -51,3 +51,13 @@ def test_load_config_uses_empty_notification_secret_when_env_missing(tmp_path, m
     config = load_config(config_path)
 
     assert config.notifications.feishu_webhook_url == ""
+
+
+def test_load_config_reads_notification_secret_from_project_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("FEISHU_WEBHOOK_URL", raising=False)
+    config_path = _write_config(tmp_path, "${FEISHU_WEBHOOK_URL}")
+    (tmp_path / ".env").write_text("FEISHU_WEBHOOK_URL=https://example.test/from-dotenv\n", encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.notifications.feishu_webhook_url == "https://example.test/from-dotenv"

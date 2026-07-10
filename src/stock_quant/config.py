@@ -77,10 +77,36 @@ def _resolve_config_path(config_path: Path, value: str | Path) -> Path:
     return (config_path.parent / ".." / path).resolve()
 
 
-def _resolve_env_string(value: object) -> str:
+def _read_dotenv_value(config_path: Path, name: str) -> str | None:
+    candidates = [
+        config_path.parent / ".env",
+        config_path.parent / ".." / ".env",
+    ]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        path = candidate.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            if not text or text.startswith("#"):
+                continue
+            if text.startswith("export "):
+                text = text.removeprefix("export ").strip()
+            key, separator, raw_value = text.partition("=")
+            if separator and key.strip() == name:
+                return raw_value.strip().strip("\"'")
+    return None
+
+
+def _resolve_env_string(value: object, config_path: Path) -> str:
     text = str(value or "")
     if text.startswith("${") and text.endswith("}") and len(text) > 3:
-        return os.environ.get(text[2:-1], "")
+        name = text[2:-1]
+        return os.environ.get(name) or _read_dotenv_value(config_path, name) or ""
     return os.path.expandvars(text)
 
 
@@ -131,7 +157,7 @@ def load_config(path: str | Path) -> AppConfig:
         ),
         factor_weights={key: float(value) for key, value in raw["factor_weights"].items()},
         notifications=NotificationConfig(
-            feishu_webhook_url=_resolve_env_string(notifications.get("feishu_webhook_url", "")),
+            feishu_webhook_url=_resolve_env_string(notifications.get("feishu_webhook_url", ""), config_path),
         ),
         longbridge_account=LongbridgeAccountConfig(
             account_label=str(longbridge_account.get("account_label", "")),

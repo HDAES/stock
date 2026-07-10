@@ -53,12 +53,11 @@ Send an account summary to the configured Feishu robot:
 stock-quant account-report --config config/default.json --send
 ```
 
-The Feishu webhook can be filled later in `config/default.json`:
+The Feishu webhook is read from `FEISHU_WEBHOOK_URL`. Keep the real value in a local `.env` file:
 
-```json
-"notifications": {
-  "feishu_webhook_url": ""
-}
+```bash
+cp .env.example .env
+# edit .env and fill FEISHU_WEBHOOK_URL
 ```
 
 For US-market checks, schedule the command in New York time so daylight saving time is handled by the system timezone database. The two entries below run 10 minutes before the regular US equity open and 10 minutes after the regular close:
@@ -73,6 +72,12 @@ Start the API server:
 
 ```bash
 uvicorn stock_quant.web.api:app --reload
+```
+
+Start both the API server and React web app with one command:
+
+```bash
+npm run dev:all
 ```
 
 Start the React web app in another terminal:
