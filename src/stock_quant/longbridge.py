@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from .logging import emit_log, get_logger
 
 
 class LongbridgeError(RuntimeError):
@@ -16,7 +19,7 @@ class LongbridgeClient:
     def __init__(
         self,
         binary: str = "longbridge",
-        logger: Any | None = print,
+        logger: Any | None = None,
         log_path: str | Path | None = "data/intraday/longbridge_cli.jsonl",
     ) -> None:
         self.binary = binary
@@ -143,18 +146,19 @@ class LongbridgeClient:
             **fields,
         }
         line = _format_console_event(payload)
-        if self.logger is not None:
-            try:
-                self.logger(line, flush=True)
-            except TypeError:
-                self.logger(line)
+        level = logging.ERROR if event in {"error", "timeout"} else logging.INFO
+        emit_log(self.logger or get_logger(__name__), line, level=level)
         if self.log_path is not None:
             try:
                 self.log_path.parent.mkdir(parents=True, exist_ok=True)
                 with self.log_path.open("a") as handle:
                     handle.write(json.dumps(payload) + "\n")
-            except OSError:
-                pass
+            except OSError as exc:
+                emit_log(
+                    get_logger(__name__),
+                    f"[longbridge] unable to write JSONL log {self.log_path}: {exc}",
+                    level=logging.WARNING,
+                )
 
 
 def _parse_json_output(output: str) -> Any:

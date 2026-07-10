@@ -16,9 +16,11 @@ from .intraday_backtest import intraday_backtest, load_intraday_history
 from .intraday_data import fetch_intraday_history, resolve_intraday_backtest_symbols, resolve_intraday_symbols
 from .intraday_report import write_intraday_report
 from .longbridge import LongbridgeClient
+from .logging import configure_cli_logging
 
 
 def main() -> None:
+    configure_cli_logging()
     parser = argparse.ArgumentParser(prog="stock-quant")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

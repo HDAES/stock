@@ -11,6 +11,7 @@ from typing import Any
 from .config import AppConfig
 from .longbridge import LongbridgeClient, LongbridgeError
 from .longbridge_paper import LongbridgePaperTradingClient, PaperOrderRequest
+from .logging import emit_log
 
 
 DEFAULT_MODE = "longbridge_paper"
@@ -553,10 +554,7 @@ def _log(logger: Any | None, message: str) -> None:
     if logger is None:
         return
     line = f"[auto-trade] {datetime.now().isoformat(timespec='seconds')} {message}"
-    try:
-        logger(line, flush=True)
-    except TypeError:
-        logger(line)
+    emit_log(logger, line)
 
 
 ACCOUNT_CASH_KEYS = [

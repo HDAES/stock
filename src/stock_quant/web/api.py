@@ -36,8 +36,12 @@ from stock_quant.intraday_data import ensure_intraday_history_for_today, resolve
 from stock_quant.intraday_report import read_intraday_report, write_intraday_report
 from stock_quant.longbridge import LongbridgeClient, LongbridgeError
 from stock_quant.longbridge_paper import LongbridgePaperTradingClient, PaperOrderRequest
+from stock_quant.logging import get_logger
 
 from .schemas import KlinePoint, RefreshResult, StockSummary, SymbolList
+
+
+LOGGER = get_logger(__name__)
 
 
 class PaperOrderPayload(BaseModel):
@@ -91,21 +95,26 @@ def create_app(
 
     async def intraday_background_loop() -> None:
         while True:
-            config = get_config()
-            wait_seconds = max(5, config.intraday.poll_seconds)
-            print(f"[intraday] next scan in {wait_seconds}s", flush=True)
-            await asyncio.sleep(wait_seconds)
-            config = get_config()
-            if not config.intraday.enabled:
-                print("[intraday] intraday disabled, skipping scan", flush=True)
-                continue
-            if not load_auto_trade_state(config).get("enabled"):
-                print("[intraday] auto trade disabled, skipping background kline scan", flush=True)
-                continue
-            if intraday_market_open(get_longbridge()):
-                await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), print)
-            else:
-                print("[intraday] market closed, skipping scan", flush=True)
+            try:
+                config = get_config()
+                wait_seconds = max(5, config.intraday.poll_seconds)
+                LOGGER.info("[intraday] next scan in %ss", wait_seconds)
+                await asyncio.sleep(wait_seconds)
+                config = get_config()
+                if not config.intraday.enabled:
+                    LOGGER.info("[intraday] intraday disabled, skipping scan")
+                    continue
+                if not load_auto_trade_state(config).get("enabled"):
+                    LOGGER.info("[intraday] auto trade disabled, skipping background kline scan")
+                    continue
+                if intraday_market_open(get_longbridge()):
+                    await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), LOGGER)
+                else:
+                    LOGGER.info("[intraday] market closed, skipping scan")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception("[intraday] background scan failed")
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -113,9 +122,9 @@ def create_app(
         if auto_intraday and intraday_task is None:
             config = get_config()
             if intraday_auto_scan_enabled() and intraday_market_open(get_longbridge()):
-                await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), print)
+                await asyncio.to_thread(evaluate_intraday, config, get_longbridge(), LOGGER)
             else:
-                print("[intraday] startup scan skipped: intraday disabled, auto trade disabled, or market closed", flush=True)
+                LOGGER.info("[intraday] startup scan skipped: intraday disabled, auto trade disabled, or market closed")
             intraday_task = asyncio.create_task(intraday_background_loop())
         try:
             yield
@@ -180,6 +189,7 @@ def create_app(
             if normalized_symbol != config.benchmark:
                 cache.fetch_calc_index(normalized_symbol, refresh=True)
         except Exception as exc:
+            LOGGER.exception("Longbridge refresh failed for %s", normalized_symbol)
             raise HTTPException(status_code=502, detail=f"Longbridge refresh failed: {exc}") from exc
         return RefreshResult(symbol=normalized_symbol, refreshed=True, kline_rows=len(frame))
 
@@ -210,7 +220,7 @@ def create_app(
             configured_label=config.longbridge_account.account_label,
             configured_is_simulated=config.longbridge_account.is_simulated_account,
         )
-        print(f"[auto-trade] current account {format_account_status(account_status)}", flush=True)
+        LOGGER.info("[auto-trade] current account %s", format_account_status(account_status))
         return {**state, "account": account_status}
 
     @app.post("/api/intraday/auto-trade")
@@ -221,7 +231,7 @@ def create_app(
             configured_label=config.longbridge_account.account_label,
             configured_is_simulated=config.longbridge_account.is_simulated_account,
         )
-        print(f"[auto-trade] current account {format_account_status(account_status)}", flush=True)
+        LOGGER.info("[auto-trade] current account %s", format_account_status(account_status))
         if payload.enabled and account_status["requires_confirmation"] and not payload.confirm_non_simulated:
             raise HTTPException(
                 status_code=409,
@@ -255,6 +265,7 @@ def create_app(
             text = format_feishu_account_report(report, account_status, auto_trade_state)
             send_feishu_text(webhook_url, text)
         except Exception as exc:
+            LOGGER.exception("Feishu account report failed")
             raise HTTPException(status_code=502, detail=f"Feishu account report failed: {exc}") from exc
         return {
             "sent": True,
@@ -323,15 +334,17 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
+            LOGGER.exception("Intraday backtest failed")
             raise HTTPException(status_code=502, detail=f"Intraday backtest failed: {exc}") from exc
 
     @app.post("/api/intraday/evaluate")
     def run_intraday_evaluate() -> dict:
         try:
-            return evaluate_intraday(get_config(), get_longbridge(), print)
+            return evaluate_intraday(get_config(), get_longbridge(), LOGGER)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
+            LOGGER.exception("Intraday evaluation failed")
             raise HTTPException(status_code=502, detail=f"Intraday evaluation failed: {exc}") from exc
 
     @app.get("/api/longbridge-paper/summary")

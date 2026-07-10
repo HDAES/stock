@@ -23,6 +23,7 @@ from .intraday_auto_trade import broker_positions, load_auto_trade_state, maybe_
 from .intraday_data import configured_intraday_symbols, merge_intraday_history
 from .longbridge import LongbridgeClient
 from .longbridge_paper import LongbridgePaperTradingClient
+from .logging import emit_log
 from .paper import PaperPortfolio
 from .strategy import equal_weight_targets, market_exposure, select_top_symbols
 
@@ -493,10 +494,7 @@ def _log_intraday(logger: Any | None, message: str) -> None:
     if logger is None:
         return
     line = f"[intraday] {datetime.now().isoformat(timespec='seconds')} {message}"
-    try:
-        logger(line, flush=True)
-    except TypeError:
-        logger(line)
+    emit_log(logger, line)
 
 
 def _format_price(value: Any) -> str:
