@@ -120,6 +120,7 @@ export type IntradayReport = {
   symbols?: string[];
   auto_fetched_symbols?: string[];
   auto_fetch_count?: number;
+  force_refresh?: boolean;
   metrics: Record<string, number>;
   equity_curve: Array<{
     timestamp: string;
@@ -153,8 +154,12 @@ export type IntradayAutoTradeState = {
   } | null;
 };
 
+export type LongbridgeAccountStatus = NonNullable<IntradayAutoTradeState["account"]>;
+
 export type LongbridgePaperSummary = {
   fetched_at?: string;
+  mode?: string;
+  account_status?: LongbridgeAccountStatus | null;
   account: unknown;
   positions: unknown;
   orders: unknown;

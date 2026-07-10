@@ -114,10 +114,12 @@ def ensure_intraday_history_for_today(
     session: str,
     count: int = 1000,
     client: IntradayDataClient | None = None,
+    force_refresh: bool = False,
 ) -> list[str]:
-    """Fetch and merge recent bars for symbols missing today's intraday cache."""
-    missing_today = [
-        symbol for symbol in _dedupe_symbols(symbols) if not intraday_cache_has_today(data_dir, symbol, period)
+    """Fetch and merge recent bars for missing or explicitly refreshed symbols."""
+    requested = _dedupe_symbols(symbols)
+    missing_today = requested if force_refresh else [
+        symbol for symbol in requested if not intraday_cache_has_today(data_dir, symbol, period)
     ]
     if not missing_today:
         return []

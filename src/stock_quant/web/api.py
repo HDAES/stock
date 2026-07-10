@@ -75,6 +75,14 @@ def create_app(
     def get_paper_client() -> LongbridgePaperTradingClient:
         return LongbridgePaperTradingClient(get_longbridge() or LongbridgeClient())
 
+    def get_longbridge_account_status() -> dict[str, Any]:
+        config = get_config()
+        return detect_longbridge_account_status(
+            get_longbridge() or LongbridgeClient(),
+            configured_label=config.longbridge_account.account_label,
+            configured_is_simulated=config.longbridge_account.is_simulated_account,
+        )
+
     def intraday_auto_scan_enabled() -> bool:
         config = get_config()
         return bool(config.intraday.enabled and load_auto_trade_state(config).get("enabled"))
@@ -274,7 +282,8 @@ def create_app(
         report_dir: str = Query(default="reports/intraday"),
         commission_bps: float | None = Query(default=None),
         slippage_bps: float | None = Query(default=None),
-        auto_fetch_count: int = Query(default=1000, ge=1, le=2000),
+        auto_fetch_count: int = Query(default=1000, ge=1, le=1000),
+        force_refresh: bool = Query(default=False),
     ) -> dict:
         config = get_config()
         data_dir = config.intraday.data_dir
@@ -293,6 +302,7 @@ def create_app(
                 config.intraday.session,
                 count=auto_fetch_count,
                 client=get_longbridge(),
+                force_refresh=force_refresh,
             )
             frames = load_intraday_history(data_dir, selected_symbols, config.intraday.period)
             result = intraday_backtest(
@@ -306,6 +316,7 @@ def create_app(
             report["symbols"] = selected_symbols
             report["auto_fetched_symbols"] = fetched_symbols
             report["auto_fetch_count"] = auto_fetch_count
+            report["force_refresh"] = force_refresh
             return report
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -326,7 +337,9 @@ def create_app(
     @app.get("/api/longbridge-paper/summary")
     def read_longbridge_paper_summary() -> dict[str, Any]:
         try:
-            return get_paper_client().summary()
+            summary = get_paper_client().summary()
+            summary["account_status"] = get_longbridge_account_status()
+            return summary
         except LongbridgeError as exc:
             raise HTTPException(status_code=502, detail=f"Longbridge paper summary failed: {exc}") from exc
 

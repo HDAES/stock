@@ -9,6 +9,7 @@ from stock_quant.config import AppConfig, DataConfig, IntradayConfig, StrategyCo
 from stock_quant.intraday_data import (
     cached_intraday_symbols,
     configured_intraday_symbols,
+    ensure_intraday_history_for_today,
     fetch_intraday_history,
     intraday_history_path,
     merge_intraday_history,
@@ -164,6 +165,39 @@ def test_fetch_intraday_history_skips_existing_cache_without_refresh(tmp_path: P
     assert client.kline_calls == []
 
 
+def test_ensure_intraday_history_force_refresh_fetches_existing_cache(tmp_path: Path) -> None:
+    path = intraday_history_path(tmp_path, "AAPL.US", "5m")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2024-01-02T09:30:00",
+                    "open": 99,
+                    "high": 100,
+                    "low": 98,
+                    "close": 99.5,
+                    "volume": 100,
+                }
+            ]
+        )
+    )
+    client = FakeClient()
+
+    fetched = ensure_intraday_history_for_today(
+        tmp_path,
+        ["AAPL.US"],
+        period="5m",
+        session="intraday",
+        count=120,
+        client=client,
+        force_refresh=True,
+    )
+
+    assert fetched == ["AAPL.US"]
+    assert client.kline_calls == [("AAPL.US", 120, "5m", "intraday")]
+
+
 def test_merge_intraday_history_dedupes_sorts_and_filters_regular_session(tmp_path: Path) -> None:
     path = intraday_history_path(tmp_path, "AAPL.US", "5m")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,3 +251,42 @@ def test_merge_intraday_history_dedupes_sorts_and_filters_regular_session(tmp_pa
     rows = json.loads(path.read_text())
     assert [row["date"] for row in rows] == ["2024-01-02T09:30:00", "2024-01-02T09:35:00"]
     assert rows[-1]["close"] == 102.5
+
+
+def test_merge_intraday_history_preserves_new_time_rows_when_existing_cache_uses_date(tmp_path: Path) -> None:
+    path = intraday_history_path(tmp_path, "AAPL.US", "5m")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "date": "2026-07-07T15:55:00",
+                    "open": 300,
+                    "high": 301,
+                    "low": 299,
+                    "close": 300.5,
+                    "volume": 1000,
+                }
+            ]
+        )
+    )
+
+    merge_intraday_history(
+        tmp_path,
+        "AAPL.US",
+        "5m",
+        [
+            {
+                "time": "2026-07-09T19:55:00Z",
+                "open": "316.210",
+                "high": "316.530",
+                "low": "315.900",
+                "close": "316.220",
+                "volume": "1217512",
+            }
+        ],
+    )
+
+    rows = json.loads(path.read_text())
+    assert [row["date"] for row in rows] == ["2026-07-07T15:55:00", "2026-07-09T15:55:00"]
+    assert rows[-1]["close"] == 316.22

@@ -26,12 +26,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function intradayBacktestPath(symbols?: string[]): string {
+function intradayBacktestPath(symbols?: string[], options?: { forceRefresh?: boolean; autoFetchCount?: number }): string {
   const params = new URLSearchParams();
   for (const symbol of symbols ?? []) {
     const normalized = symbol.trim().toUpperCase();
     if (normalized) params.append("symbols", normalized);
   }
+  if (options?.forceRefresh) params.set("force_refresh", "true");
+  if (options?.autoFetchCount) params.set("auto_fetch_count", String(options.autoFetchCount));
   const query = params.toString();
   return `/api/intraday/backtest${query ? `?${query}` : ""}`;
 }
@@ -50,7 +52,8 @@ export const api = {
   rank: () => request<RankRow[]>("/api/strategy/rank"),
   backtest: () => request<BacktestResult>("/api/strategy/backtest"),
   intradayReport: () => request<IntradayReport>("/api/intraday/report"),
-  intradayBacktest: (symbols?: string[]) => request<IntradayReport>(intradayBacktestPath(symbols), { method: "POST" }),
+  intradayBacktest: (symbols?: string[], options?: { forceRefresh?: boolean; autoFetchCount?: number }) =>
+    request<IntradayReport>(intradayBacktestPath(symbols, options), { method: "POST" }),
   intradayAutoTrade: () => request<IntradayAutoTradeState>("/api/intraday/auto-trade"),
   updateIntradayAutoTrade: (enabled: boolean, confirmNonSimulated = false) =>
     request<IntradayAutoTradeState>("/api/intraday/auto-trade", {

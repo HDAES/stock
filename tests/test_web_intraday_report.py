@@ -118,12 +118,17 @@ def test_intraday_backtest_endpoint_runs_and_saves_report(tmp_path: Path) -> Non
     app = create_app(config_path=config_path, longbridge_client=fake_client, auto_intraday=False)
     client = TestClient(app)
 
-    response = client.post("/api/intraday/backtest", params={"report_dir": str(report_dir)})
+    response = client.post(
+        "/api/intraday/backtest",
+        params={"report_dir": str(report_dir), "force_refresh": "true", "auto_fetch_count": 1000},
+    )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["symbols"] == ["TEST.US"]
     assert payload["auto_fetched_symbols"] == ["TEST.US"]
+    assert payload["auto_fetch_count"] == 1000
+    assert payload["force_refresh"] is True
     assert fake_client.kline_calls == [("TEST.US", 1000, "5m", "intraday")]
     assert payload["metrics"]["final_equity"] > 0
     assert (report_dir / "metrics.json").exists()

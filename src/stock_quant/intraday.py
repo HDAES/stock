@@ -44,11 +44,15 @@ def normalize_intraday_kline(payload: list[dict], symbol: str) -> pd.DataFrame:
     if frame.empty:
         raise ValueError(f"No intraday kline data for {symbol}")
 
-    date_col = next((col for col in ("date", "time", "timestamp") if col in frame.columns), None)
-    if date_col is None:
+    date_cols = [col for col in ("date", "time", "timestamp") if col in frame.columns]
+    if not date_cols:
         raise ValueError(f"Intraday kline payload for {symbol} has no date/time column")
 
-    frame["date"] = normalize_intraday_datetime(frame[date_col], date_col)
+    normalized_dates = pd.Series(pd.NaT, index=frame.index)
+    for date_col in date_cols:
+        parsed_dates = normalize_intraday_datetime(frame[date_col], date_col)
+        normalized_dates = normalized_dates.where(normalized_dates.notna(), parsed_dates)
+    frame["date"] = normalized_dates
     for column in ("open", "high", "low", "close", "volume"):
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")

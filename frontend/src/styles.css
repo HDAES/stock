@@ -440,6 +440,35 @@ th {
   display: none;
 }
 
+.account-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.account-banner strong {
+  font-size: 14px;
+}
+
+.account-banner.simulated {
+  color: #0f5132;
+  background: #dcfce7;
+}
+
+.account-banner.warning {
+  color: #713f12;
+  background: #fef3c7;
+}
+
+.account-banner.danger {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
 .loading {
   color: #334155;
   background: #ffffff;

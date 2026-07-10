@@ -135,6 +135,20 @@ def test_api_requires_confirmation_to_enable_auto_trade_for_unknown_account(tmp_
     assert data["account"]["requires_confirmation"] is True
 
 
+def test_api_longbridge_paper_summary_includes_account_status(tmp_path):
+    config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"])
+    longbridge = _FakeLongbridge()
+    client = TestClient(create_app(config_path, longbridge_client=longbridge, auto_intraday=False))
+
+    response = client.get("/api/longbridge-paper/summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["account_status"]["account_label"] == "Paper Trading"
+    assert data["account_status"]["is_simulated"] is True
+    assert data["account_status"]["requires_confirmation"] is False
+
+
 def test_api_feishu_report_requires_webhook(tmp_path):
     config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"])
     client = TestClient(create_app(config_path, longbridge_client=_FakeLongbridge(), auto_intraday=False))
@@ -249,6 +263,17 @@ class _FakeLongbridge:
 
     def market_status(self):
         return [{"market": "US", "status": "trading"}]
+
+    def run_json(self, args, input_text=None, timeout=None):
+        if args == ["account"]:
+            return self.assets()
+        if args in (["positions"], ["position"], ["stock-position"]):
+            return []
+        if args == ["order"]:
+            return []
+        if args == ["order", "executions"]:
+            return []
+        raise AssertionError(f"unexpected longbridge args: {args}")
 
     def quote(self, *symbols):
         return [{"symbol": symbol, "last_done": "104"} for symbol in symbols]
