@@ -74,6 +74,8 @@ def test_api_intraday_evaluate_uses_fake_longbridge_client(tmp_path):
     data = response.json()
     assert data["positions"] == {}
     assert data["last_signals"][0]["action"] == "BUY"
+    assert data["last_signals"][0]["longbridge_order"]["submitted"] is False
+    assert data["last_signals"][0]["longbridge_order"]["mode"] == "READ_ONLY"
 
 
 def test_api_startup_skips_background_kline_scan_when_auto_trade_disabled(tmp_path):
@@ -89,10 +91,10 @@ def test_api_startup_skips_background_kline_scan_when_auto_trade_disabled(tmp_pa
     assert longbridge.kline_calls == []
 
 
-def test_api_startup_auto_scans_intraday_when_auto_trade_enabled_and_market_open(tmp_path):
+def test_api_startup_does_not_restore_legacy_auto_scan_from_enabled_state(tmp_path):
     config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"], poll_seconds=60)
     config = load_config(config_path)
-    save_auto_trade_state(
+    saved = save_auto_trade_state(
         config,
         True,
         account_status={
@@ -106,13 +108,15 @@ def test_api_startup_auto_scans_intraday_when_auto_trade_enabled_and_market_open
     with TestClient(create_app(config_path, longbridge_client=longbridge)) as client:
         response = client.get("/api/intraday/state")
 
+    assert saved["enabled"] is False
+    assert saved["mode"] == "READ_ONLY"
     assert response.status_code == 200
     data = response.json()
-    assert data["last_signals"][0]["action"] == "BUY"
-    assert longbridge.kline_calls == ["AAPL.US"]
+    assert data["last_signals"] == []
+    assert longbridge.kline_calls == []
 
 
-def test_api_requires_confirmation_to_enable_auto_trade_for_unknown_account(tmp_path):
+def test_api_cannot_enable_legacy_auto_trade_for_unknown_account(tmp_path):
     config_path = _write_web_fixture(tmp_path, intraday_symbols=["AAPL.US"])
     longbridge = _FakeLongbridge()
     longbridge.auth_status_payload = {"account": {"account_type": None, "account_no": "123456789"}}
@@ -130,8 +134,10 @@ def test_api_requires_confirmation_to_enable_auto_trade_for_unknown_account(tmp_
 
     assert confirmed_response.status_code == 200
     data = confirmed_response.json()
-    assert data["enabled"] is True
-    assert data["confirmed_non_simulated"] is True
+    assert data["enabled"] is False
+    assert data["mode"] == "READ_ONLY"
+    assert data["confirmed_non_simulated"] is False
+    assert data["read_only"] is True
     assert data["account"]["requires_confirmation"] is True
 
 
@@ -144,6 +150,8 @@ def test_api_longbridge_paper_summary_includes_account_status(tmp_path):
 
     assert response.status_code == 200
     data = response.json()
+    assert data["mode"] == "READ_ONLY"
+    assert data["read_only"] is True
     assert data["account_status"]["account_label"] == "Paper Trading"
     assert data["account_status"]["is_simulated"] is True
     assert data["account_status"]["requires_confirmation"] is False
@@ -185,9 +193,10 @@ def test_api_feishu_report_sends_account_summary(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["sent"] is True
+    assert response.json()["auto_trade_enabled"] is False
     assert sent["webhook_url"] == "https://example.test/webhook"
     assert "账户: Paper Trading" in sent["text"]
-    assert "自动交易状态: 开启" in sent["text"]
+    assert "自动交易状态: 关闭" in sent["text"]
     assert "AAPL.US 数量=10" in sent["text"]
 
 
